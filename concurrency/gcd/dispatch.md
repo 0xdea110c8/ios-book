@@ -1,3 +1,6 @@
+## Оглавление
+- [dispatch](#dispatch)
+- [dispatch_async](#dispatch_async)
 ## dispatch
 `Dispatch framework` позволять планировать блоки на асинхронное и конкурентное выполнение методами, описанными в [dispatch_async](#dispatch_async)
 и dispatch_apply.  
