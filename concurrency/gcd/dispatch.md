@@ -7,9 +7,11 @@
   - [Фоновое параллельное выполнение](#фоновое-параллельное-выполнение)
   - [Коллбэки по завершении](#коллбэки-по-завершении)
   - [Рекурсивные блокировки](#рекурсивные-блокировки)
+  - [Неявные ссылки](#неявные-ссылки)
+  - [](#)
 ## Dispatch
 ### Описание
-`Dispatch framework` позволять планировать блоки на асинхронное и конкурентное выполнение методами, описанными в [DispatchQueue.async](#dispatch_async)
+`Dispatch framework` позволять планировать блоки на асинхронное и конкурентное выполнение методами, описанными в [DispatchQueue.async](#dispatchqueueasync)
 и dispatch_apply.  
 `Dispatch queues` - это базовые юниты организации блоков. Несколько очередей создаются по умолчанию, приложения могут создавать
 дополнительные (см. dispatch_queue_create).   
@@ -80,31 +82,42 @@ func executeOnQueue(
 }
 ```
 ### Рекурсивные блокировки
-Хотя метод `DispatchQueue.sync(group:qos:flags:execute:)` может заменить блокировку, он не может заменить рекурсивную блокировку.
-     Unlike locks, queues support both asynchronous and synchronous operations, and those
-     operations are ordered by definition.  A recursive call to dispatch_sync() causes a simple deadlock as the currently executing block waits for the next block to complete,
-     but the next block will not start until the currently running block completes.
+Хотя метод `DispatchQueue.sync(group:qos:flags:execute:)` может заменить блокировку, он не может заменить рекурсивную блокировку. В отличие от блокировок, очереди поддерживают как асинхронные, так и синхронные операции, причем эти операции упорядочены по определению.  
+Рекурсивный вызов метода `DispatchQueue.sync(group:qos:flags:execute:)` приводит к простой взаимоблокировке, поскольку выполняющийся в данный момент блок ожидает завершения следующего блока, а следующий блок не может начаться, пока не завершится текущий.
 
-     As the dispatch framework was designed, we studied recursive locks.  We found that the vast majority of recursive locks are deployed retroactively when ill-defined lock
-     hierarchies are discovered.  As a consequence, the adoption of recursive locks often mutates obvious bugs into obscure ones.  This study also revealed an insight: if
-     reentrancy is unavoidable, then reader/writer locks are preferable to recursive locks.  Disciplined use of reader/writer locks enable reentrancy only when reentrancy is
-     safe (the "read" side of the lock).
+В процессе проектирования фреймворка `Dispatch` Apple изучала рекурсивные блокировки. Выяснилось, что подавляющее большинство таких блокировок внедряется задним числом — уже после того, как обнаруживаются проблемы с отсутствием четкого определения иерархии блокировок. Как следствие, использование рекурсивных блокировок часто превращает очевидные баги в трудноуловимые. В ходе исследования также выяснилось следующее: если
+повторный вход неизбежен, то `reader/writer` блокировки предпочтительнее рекурсивных блокировок. Грамотное использование `reader/writer` блокировок позволяет допускать повторный вход лишь тогда, когда это безопасно (в режиме чтения).
 
-     Nevertheless, if it is absolutely necessary, what follows is an imperfect way of implementing recursive locks using the dispatch framework:
+Тем не менее, если это совершенно необходимо, ниже приведен неидеальный способ реализации рекурсивных блокировок с использованием фреймворка `Dispatch`:
+```
+func sloppyLock(object: Object, block: () -> Void) {
+    if object.owner == pthread_self() {
+        block()
+        return
+    }
 
-     void
-     sloppy_lock(object_t object, void (^block)(void))
-     {
-             if (object->owner == pthread_self()) {
-                     return block();
-             }
-             dispatch_sync(object->queue, ^{
-                     object->owner = pthread_self();
-                     block();
-                     object->owner = NULL;
-             });
-     }
+    object.queue.sync {
+        object.owner = pthread_self()
+        block()
+        object.owner = nil
+    }
+}
+```
+Приведенный пример не решает проблему, возникающую, когда очередь A выполняется в потоке X и вызывает `DispatchQueue.sync(group:qos:flags:execute:)` для очереди B (выполняющейся в потоке Y), а та, в свою очередь, рекурсивно вызывает `DispatchQueue.sync(group:qos:flags:execute:)` для очереди A, что приводит к взаимной блокировке. Это вплоть до ошибок совместимо с нетривиальным использованием потоков. На самом деле, полноценную реентерабельность невозможно поддерживать с помощью рекурсивных блокировок, когда реентерабельность достигает своего предельного уровня — IPC (Inter-Process Communication) или RPC (Remote Procedure Call).
 
-     The above example does not solve the case where queue A runs on thread X which calls dispatch_sync() against queue B which runs on thread Y which recursively calls
-     dispatch_sync() against queue A, which deadlocks both examples.  This is bug-for-bug compatible with nontrivial pthread usage.  In fact, nontrivial reentrancy is
-     impossible to support in recursive locks once the ultimate level of reentrancy is deployed (IPC or RPC).
+### Неявные ссылки
+Синхронные методы в рамках фреймворка `Dispatch` обладают неявной ссылкой на целевую очередь. Иными словами, синхронный метод заимствует ссылку у вызывающего метода (это допустимо, поскольку вызывающий метод заблокирован в ожидании результата выполнения синхронного метода и, следовательно, не может изменить счетчик ссылок очереди до тех пор, пока синхронный метод не завершит работу).
+
+Это отличает их от асинхронных методов, которые должны держать как блок так и очередь в
+течение всего времени выполнения, так как вызывающий метод может сразу отказаться от использования этих объектов.
+
+FUNDAMENTALS
+     Conceptually, dispatch_sync() is a convenient wrapper around dispatch_async() with the addition of a semaphore to wait for completion of the block, and a wrapper around
+     the block to signal its completion.  See dispatch_semaphore_create(3) for more information about dispatch semaphores.  The actual implementation of the dispatch_sync()
+     function may be optimized and differ from the above description.
+
+     The dispatch_async() function is a wrapper around dispatch_async_f().  The application-defined context parameter is passed to the function when it is invoked on the
+     target queue.
+
+     The dispatch_sync() function is a wrapper around dispatch_sync_f().  The application-defined context parameter is passed to the function when it is invoked on the target
+     queue. 
