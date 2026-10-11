@@ -1,5 +1,5 @@
 ## dispatch
-`Dispatch framework` позволять планировать блоки на асинхронное и конкурентное выполнение методами, описанными в [dispatch_async](#dispatchasync)
+`Dispatch framework` позволять планировать блоки на асинхронное и конкурентное выполнение методами, описанными в [dispatch_async](#dispatch_async)
 и dispatch_apply.  
 `Dispatch queues` - это базовые юниты организации блоков. Несколько очередей создаются по умолчанию, приложения могут создавать
 дополнительные (см. dispatch_queue_create).   
