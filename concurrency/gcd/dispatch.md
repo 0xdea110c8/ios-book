@@ -14,7 +14,7 @@
 
 ## DispatchQueue.async
 ### Описание
-Методы `DispatchQueue.async(execute work:)` и `DispatchQueue.sync(execute work:)` планируют блоки для конкурентного выполнения 
+Методы `DispatchQueue.async(group:qos:flags:execute:)` и `DispatchQueue.sync(group:qos:flags:execute:)` планируют блоки для конкурентного выполнения 
 в фреймворке [dispatch](#dispatch). Блоки отправляются в очередь, определяющую политику их выполнения.
 (см. dispatch_queue_create).  
 Эти методы поддерживают эффективные временные блокировки, фоновое параллельное выполнение и
@@ -32,7 +32,7 @@ assert(r == 0);
 r = pthread_mutex_unlock(&my_lock);
 assert(r == 0);
 ```
-Метод `DispatchQueue.sync(execute work:)` может быть использован вместе с последовательной очередью для 
+Метод `DispatchQueue.sync(group:qos:flags:execute:)` может быть использован вместе с последовательной очередью для 
 достижения того же стиля синхронизации, например:
 ```swift
 myQueue.sync {
@@ -49,7 +49,7 @@ myQueue.async {
 }
 ```
 ### Фоновое параллельное выполнение
-Метод / `DispatchQueue.global(qos:).async(execute work:)` может быть использован для выполнения простых фоновых задач на глобальной конкурентной очереди, например:
+Метод / `DispatchQueue.global(qos:).async(group:qos:flags:execute:)` может быть использован для выполнения простых фоновых задач на глобальной конкурентной очереди, например:
 ```swift
 DispatchQueue.global(qos: .default).async {
      // background operation
