@@ -8,6 +8,7 @@
   - [Коллбэки по завершении](#коллбэки-по-завершении)
   - [Рекурсивные блокировки](#рекурсивные-блокировки)
   - [Неявные ссылки](#неявные-ссылки)
+  - [Основы](#основы)
   - [](#)
 ## Dispatch
 ### Описание
@@ -111,13 +112,5 @@ func sloppyLock(object: Object, block: () -> Void) {
 Это отличает их от асинхронных методов, которые должны держать как блок так и очередь в
 течение всего времени выполнения, так как вызывающий метод может сразу отказаться от использования этих объектов.
 
-FUNDAMENTALS
-     Conceptually, dispatch_sync() is a convenient wrapper around dispatch_async() with the addition of a semaphore to wait for completion of the block, and a wrapper around
-     the block to signal its completion.  See dispatch_semaphore_create(3) for more information about dispatch semaphores.  The actual implementation of the dispatch_sync()
-     function may be optimized and differ from the above description.
-
-     The dispatch_async() function is a wrapper around dispatch_async_f().  The application-defined context parameter is passed to the function when it is invoked on the
-     target queue.
-
-     The dispatch_sync() function is a wrapper around dispatch_sync_f().  The application-defined context parameter is passed to the function when it is invoked on the target
-     queue. 
+### Основы
+Концептуально `DispatchQueue.sync(group:qos:flags:execute:)` представляет собой удобную обертку над `DispatchQueue.async(group:qos:flags:execute:)`, дополненную семафором для ожидания завершения блока и оберткой вокруг самого блока, сигнализирующей о его выполнении. Дополнительную информацию о семафорах в `Dispatch` можно найти в описании dispatch_semaphore_create. Фактическая реализация функции `DispatchQueue.sync(group:qos:flags:execute:)` может быть оптимизирована и отличаться от приведенного выше описания.
