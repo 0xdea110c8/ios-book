@@ -6,6 +6,7 @@
   - [Временная синхронизация](#временная-синхронизация)
   - [Фоновое параллельное выполнение](#фоновое-параллельное-выполнение)
   - [Коллбэки по завершении](#коллбэки-по-завершении)
+  - [Рекурсивные блокировки](#рекурсивные-блокировки)
 ## Dispatch
 ### Описание
 `Dispatch framework` позволять планировать блоки на асинхронное и конкурентное выполнение методами, описанными в [DispatchQueue.async](#dispatch_async)
@@ -78,3 +79,32 @@ func executeOnQueue(
     }
 }
 ```
+### Рекурсивные блокировки
+Хотя метод `DispatchQueue.sync(group:qos:flags:execute:)` может заменить блокировку, он не может заменить рекурсивную блокировку.
+     Unlike locks, queues support both asynchronous and synchronous operations, and those
+     operations are ordered by definition.  A recursive call to dispatch_sync() causes a simple deadlock as the currently executing block waits for the next block to complete,
+     but the next block will not start until the currently running block completes.
+
+     As the dispatch framework was designed, we studied recursive locks.  We found that the vast majority of recursive locks are deployed retroactively when ill-defined lock
+     hierarchies are discovered.  As a consequence, the adoption of recursive locks often mutates obvious bugs into obscure ones.  This study also revealed an insight: if
+     reentrancy is unavoidable, then reader/writer locks are preferable to recursive locks.  Disciplined use of reader/writer locks enable reentrancy only when reentrancy is
+     safe (the "read" side of the lock).
+
+     Nevertheless, if it is absolutely necessary, what follows is an imperfect way of implementing recursive locks using the dispatch framework:
+
+     void
+     sloppy_lock(object_t object, void (^block)(void))
+     {
+             if (object->owner == pthread_self()) {
+                     return block();
+             }
+             dispatch_sync(object->queue, ^{
+                     object->owner = pthread_self();
+                     block();
+                     object->owner = NULL;
+             });
+     }
+
+     The above example does not solve the case where queue A runs on thread X which calls dispatch_sync() against queue B which runs on thread Y which recursively calls
+     dispatch_sync() against queue A, which deadlocks both examples.  This is bug-for-bug compatible with nontrivial pthread usage.  In fact, nontrivial reentrancy is
+     impossible to support in recursive locks once the ultimate level of reentrancy is deployed (IPC or RPC).
