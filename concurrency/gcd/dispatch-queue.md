@@ -47,7 +47,7 @@
 ## Предоставляемые очереди
 GCD предоставляет
 - главную последовательную очередь, выполняемую на главном потоке (`DispatchQueue.main`)
-- пять глобальных очередей, различающихся качеством обслуживания
+- пять глобальных конкурентных очередей, различающихся качеством обслуживания
   - `DispatchQueue.global(qos: .userInteractive)`
   - `DispatchQueue.global(qos: .userInitiated)`
   - `DispatchQueue.global(qos: .default)`
