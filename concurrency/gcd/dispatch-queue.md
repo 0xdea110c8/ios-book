@@ -7,6 +7,9 @@
 ## Оглавление
 - [Serial queue](#serial-queue)
 - [Concurrent queue](#concurrent-queue)
+- [Предоставляемые очереди](#предоставляемые-очереди)
+- [Quality of service](#quality-of-service)
+- [](#)
 ## Serial queue
 Последовательная очередь выполняeт блоки по одной в порядке FIFO.
 ```
@@ -54,7 +57,7 @@ GCD предоставляет
   - `DispatchQueue.global(qos: .default)`
   - `DispatchQueue.global(qos: .utility)`
   - `DispatchQueue.global(qos: .background)`
-
+## Quality of service
 | QoS | Приоритет | Ядра CPU | Назначение |
 | --- | --- | --- | --- |
 | userInteractive | Наивысший | P-Cores | **Интерфейс и анимации.** Задачи, результат которых нужен пользователю прямо в эту миллисекунду |
@@ -68,3 +71,8 @@ GCD предоставляет
 > ```c
 > qos == DISPATCH_QOS_UNSPECIFIED ? DISPATCH_QOS_DEFAULT : qos
 > ```
+
+Также на уровне ядра
+- потокам с более высоким QoS отдаётся приоритет в получении процессорного времени,
+- чтение/запись файлов с более высоким QoS в условиях конкуренции происходит быстрее,
+- запросы к сети с более высоким QoS обрабатываются сетевым стеком ОС быстрее.
