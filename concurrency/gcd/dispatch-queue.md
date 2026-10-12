@@ -106,4 +106,4 @@ DispatchQueue(label:qos:attributes:autoreleaseFrequency:target)
 > [!Tip]
 > Если `target` очередь не указана (дефолтное значение аргумента `nil`) или явно передан `nil`, то в `libdispatch` присваивается глобальная очередь с соответствующим QoS.
 ### Проблема избыточного создания потоков
-Описана в отдельном [файле](concurrency/gcd/thread-explosion.md).
+Описана в отдельном [файле](thread-explosion.md).
