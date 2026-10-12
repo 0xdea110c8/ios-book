@@ -102,4 +102,5 @@ DispatchQueue(label:qos:attributes:autoreleaseFrequency:target)
       - Очередь не создает пул autorelease.
 - `target` : `DispatchQueue?`
   - Целевая очередь на которой будут выполняться блоки.
-
+> [!Tip]
+> Если `target` очередь не указана (дефолтное значение аргумента `nil`) или явно передан `nil`, то в `libdispatch` присваивается глобальная очередь с соответствующим QoS.
