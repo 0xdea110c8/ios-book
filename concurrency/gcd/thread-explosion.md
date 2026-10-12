@@ -18,7 +18,7 @@ Apple в документации [DispatchQueue](https://developer.apple.com/do
 
 Раз официальная документация Apple нам тут не поможет, придётся лезть в исходники `libdispatch`.
 
-Создание очереди
+## Создание очереди
 ```c
 DISPATCH_NOINLINE
 static dispatch_queue_t
@@ -142,3 +142,35 @@ _dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
 	return _dispatch_trace_queue_create(dq)._dq;
 }
 ```
+Нас интересует кусок кода c обработкой расхождений между атрибутами очереди и целевой очередью
+```c
+	if (tq && dx_type(tq) == DISPATCH_QUEUE_GLOBAL_ROOT_TYPE) {
+		// Handle discrepancies between attr and target queue, attributes win
+		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
+			if (tq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT) {
+				overcommit = _dispatch_queue_attr_overcommit_enabled;
+			} else {
+				overcommit = _dispatch_queue_attr_overcommit_disabled;
+			}
+		}
+		if (qos == DISPATCH_QOS_UNSPECIFIED) {
+			qos = _dispatch_priority_qos(tq->dq_priority);
+		}
+		tq = NULL;
+	} else if (tq && !tq->do_targetq) {
+		// target is a pthread or runloop root queue, setting QoS or overcommit
+		// is disallowed
+		if (overcommit != _dispatch_queue_attr_overcommit_unspecified) {
+			DISPATCH_CLIENT_CRASH(tq, "Cannot specify an overcommit attribute "
+					"and use this kind of target queue");
+		}
+	} else {
+		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
+			// Serial queues default to overcommit!
+			overcommit = dqai.dqai_concurrent ?
+					_dispatch_queue_attr_overcommit_disabled :
+					_dispatch_queue_attr_overcommit_enabled;
+		}
+	}
+```
+Здесь можно заметить, что если есть целевая очередь `tq`, и она корневая (только глобальные очереди имеют тип `DISPATCH_QUEUE_GLOBAL_ROOT_TYPE`), то если мы передаем флаг `overcommit` как `_dispatch_queue_attr_overcommit_unspecified`, то этот флаг наследуется от целевой очереди. А если целевая очередь не является глобальной, то флаг `overcommit` устанавливается как отключенный `_dispatch_queue_attr_overcommit_disabled` для конкурентных очередей или включенный `_dispatch_queue_attr_overcommit_enabled` для последовательных.
