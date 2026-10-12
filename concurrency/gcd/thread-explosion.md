@@ -173,4 +173,5 @@ _dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
 		}
 	}
 ```
-Здесь можно заметить, что если есть целевая очередь `tq`, и она корневая (только глобальные очереди имеют тип `DISPATCH_QUEUE_GLOBAL_ROOT_TYPE`), то если мы передаем флаг `overcommit` как `_dispatch_queue_attr_overcommit_unspecified`, то этот флаг наследуется от целевой очереди. А если целевая очередь не является глобальной, то флаг `overcommit` устанавливается как отключенный `_dispatch_queue_attr_overcommit_disabled` для конкурентных очередей или включенный `_dispatch_queue_attr_overcommit_enabled` для последовательных.
+Здесь можно заметить, что если есть целевая очередь `tq`, и она корневая (только глобальные очереди имеют тип `DISPATCH_QUEUE_GLOBAL_ROOT_TYPE`), то если мы передаем флаг `overcommit` как `_dispatch_queue_attr_overcommit_unspecified`, то этот флаг наследуется от целевой очереди.  
+А если целевая очередь не является глобальной, то флаг `overcommit` устанавливается как отключенный `_dispatch_queue_attr_overcommit_disabled` для конкурентных очередей или включенный `_dispatch_queue_attr_overcommit_enabled` для последовательных.
