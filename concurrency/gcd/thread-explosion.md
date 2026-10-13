@@ -17,161 +17,131 @@ Apple в документации [DispatchQueue](https://developer.apple.com/do
 - Почему при передаче в глобальную конкурентную очередь сохранится последовательный порядок выполнения?
 
 Раз официальная документация Apple нам тут не поможет, придётся лезть в исходники `libdispatch`.
+## DISPATCH_PRIORITY_FLAG_OVERCOMMIT
+Был введен в 2014 году вместе с вводом системы `Quality of Service`.  
+До `QoS` у глобальных очередей был `priority`, а кастомные очереди создавались без подобного параметра вообще, он регулировался целевой очередью.
+Это порождало некоторые проблемы:
+- Глобальный `thread starvation`. Если низкоприоритетные задачи занимали весь пул потоков, высокоприоритетная задача не могла пробить этот затор, так как ядро не умело динамически повышать приоритеты потоков и перекидывать их на другие ядра.
+- Ядро не могло на основе приоритетов раскидывать задачи между новыми процессорами с P- и E-ядрами. 
 
+`overcommit` позволяет очереди создавать больше максимально определенного системой количества потоков `wq_max_threads`. Это сделано ради того, чтобы если один модуль приложения забьет все доступные потоки, второй модуль не повис намертво, а мог продолжать работу, пусть и ценой дополнительной нагрузки на процессор. 
 ## Создание очереди
+Нас интересует кусок кода c обработкой расхождений между атрибутами очереди и целевой очередью
 ```c
-DISPATCH_NOINLINE
-static dispatch_queue_t
-_dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
-		dispatch_queue_t tq, bool legacy)
-{
-	dispatch_queue_attr_info_t dqai = _dispatch_queue_attr_to_info(dqa);
-
-	//
-	// Step 1: Normalize arguments (qos, overcommit, tq)
-	//
-
-	dispatch_qos_t qos = dqai.dqai_qos;
-#if !HAVE_PTHREAD_WORKQUEUE_QOS
-	if (qos == DISPATCH_QOS_USER_INTERACTIVE) {
-		dqai.dqai_qos = qos = DISPATCH_QOS_USER_INITIATED;
-	}
-	if (qos == DISPATCH_QOS_MAINTENANCE) {
-		dqai.dqai_qos = qos = DISPATCH_QOS_BACKGROUND;
-	}
-#endif // !HAVE_PTHREAD_WORKQUEUE_QOS
-
-	_dispatch_queue_attr_overcommit_t overcommit = dqai.dqai_overcommit;
-	if (overcommit != _dispatch_queue_attr_overcommit_unspecified && tq) {
-		if (tq->do_targetq) {
-			DISPATCH_CLIENT_CRASH(tq, "Cannot specify both overcommit and "
-					"a non-global target queue");
+if (tq && dx_type(tq) == DISPATCH_QUEUE_GLOBAL_ROOT_TYPE) {
+	// Handle discrepancies between attr and target queue, attributes win
+	if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
+		if (tq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT) {
+			overcommit = _dispatch_queue_attr_overcommit_enabled;
+		} else {
+			overcommit = _dispatch_queue_attr_overcommit_disabled;
 		}
 	}
-
-	if (tq && dx_type(tq) == DISPATCH_QUEUE_GLOBAL_ROOT_TYPE) {
-		// Handle discrepancies between attr and target queue, attributes win
-		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
-			if (tq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT) {
-				overcommit = _dispatch_queue_attr_overcommit_enabled;
-			} else {
-				overcommit = _dispatch_queue_attr_overcommit_disabled;
-			}
-		}
-		if (qos == DISPATCH_QOS_UNSPECIFIED) {
-			qos = _dispatch_priority_qos(tq->dq_priority);
-		}
-		tq = NULL;
-	} else if (tq && !tq->do_targetq) {
-		// target is a pthread or runloop root queue, setting QoS or overcommit
-		// is disallowed
-		if (overcommit != _dispatch_queue_attr_overcommit_unspecified) {
-			DISPATCH_CLIENT_CRASH(tq, "Cannot specify an overcommit attribute "
-					"and use this kind of target queue");
-		}
-	} else {
-		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
-			// Serial queues default to overcommit!
-			overcommit = dqai.dqai_concurrent ?
-					_dispatch_queue_attr_overcommit_disabled :
-					_dispatch_queue_attr_overcommit_enabled;
-		}
+	if (qos == DISPATCH_QOS_UNSPECIFIED) {
+		qos = _dispatch_priority_qos(tq->dq_priority);
 	}
-	if (!tq) {
-		tq = _dispatch_get_root_queue(
-				qos == DISPATCH_QOS_UNSPECIFIED ? DISPATCH_QOS_DEFAULT : qos,
-				overcommit == _dispatch_queue_attr_overcommit_enabled)->_as_dq;
+	tq = NULL;
+} else if (tq && !tq->do_targetq) {
+	// target is a pthread or runloop root queue, setting QoS or overcommit
+	// is disallowed
+	if (overcommit != _dispatch_queue_attr_overcommit_unspecified) {
+		DISPATCH_CLIENT_CRASH(tq, "Cannot specify an overcommit attribute "
+				"and use this kind of target queue");
+	}
+} else {
+	if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
+		// Serial queues default to overcommit!
+		overcommit = dqai.dqai_concurrent ?
+				_dispatch_queue_attr_overcommit_disabled :
+				_dispatch_queue_attr_overcommit_enabled;
+	}
+}
+```
+Здесь можно заметить, что если есть целевая очередь `tq`, и она корневая (только глобальные очереди имеют тип `DISPATCH_QUEUE_GLOBAL_ROOT_TYPE`), то если мы передаем флаг `overcommit` как `_dispatch_queue_attr_overcommit_unspecified`, то этот флаг наследуется от целевой очереди.  
+А если целевая очередь не является глобальной, то свойство `overcommit` устанавливается отключенным `_dispatch_queue_attr_overcommit_disabled` для конкурентных очередей или включенным `_dispatch_queue_attr_overcommit_enabled` для последовательных.
+
+Это объясняет вышеизложенный тезис 
+> Для задач, требующих последовательного выполнения, назначайте целевой очередью для своей последовательной очереди одну из глобальных конкурентных очередей. Это позволит сохранить последовательный порядок выполнения задач, минимизировав при этом количество отдельных очередей, требующих создания потоков.
+
+Если мы создаём последовательную очередь и не указываем ей целевую, то последовательная очередь становится оверкоммитной.
+
+В приложении есть по две глобальных очереди на каждый `QoS`, нон-оверкоммитная и оверкоммитная.
+```c
+struct dispatch_queue_global_s _dispatch_root_queues[] = {
+#define _DISPATCH_ROOT_QUEUE_IDX(n, flags) \
+		((flags & DISPATCH_PRIORITY_FLAG_OVERCOMMIT) ? \
+		DISPATCH_ROOT_QUEUE_IDX_##n##_QOS_OVERCOMMIT : \
+		DISPATCH_ROOT_QUEUE_IDX_##n##_QOS)
+#define _DISPATCH_ROOT_QUEUE_ENTRY(n, flags, ...) \
+	[_DISPATCH_ROOT_QUEUE_IDX(n, flags)] = { \
+		DISPATCH_GLOBAL_OBJECT_HEADER(queue_global), \
+		.dq_state = DISPATCH_ROOT_QUEUE_STATE_INIT_VALUE, \
+		.do_ctxt = _dispatch_root_queue_ctxt(_DISPATCH_ROOT_QUEUE_IDX(n, flags)), \
+		.dq_atomic_flags = DQF_WIDTH(DISPATCH_QUEUE_WIDTH_POOL), \
+		.dq_priority = flags | ((flags & DISPATCH_PRIORITY_FLAG_FALLBACK) ? \
+				_dispatch_priority_make_fallback(DISPATCH_QOS_##n) : \
+				_dispatch_priority_make(DISPATCH_QOS_##n, 0)), \
+		__VA_ARGS__ \
+	}
+	_DISPATCH_ROOT_QUEUE_ENTRY(MAINTENANCE, 0,
+		.dq_label = "com.apple.root.maintenance-qos",
+		.dq_serialnum = 4,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(MAINTENANCE, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.maintenance-qos.overcommit",
+		.dq_serialnum = 5,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(BACKGROUND, 0,
+		.dq_label = "com.apple.root.background-qos",
+		.dq_serialnum = 6,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(BACKGROUND, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.background-qos.overcommit",
+		.dq_serialnum = 7,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(UTILITY, 0,
+		.dq_label = "com.apple.root.utility-qos",
+		.dq_serialnum = 8,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(UTILITY, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.utility-qos.overcommit",
+		.dq_serialnum = 9,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(DEFAULT, DISPATCH_PRIORITY_FLAG_FALLBACK,
+		.dq_label = "com.apple.root.default-qos",
+		.dq_serialnum = 10,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(DEFAULT,
+			DISPATCH_PRIORITY_FLAG_FALLBACK | DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.default-qos.overcommit",
+		.dq_serialnum = 11,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INITIATED, 0,
+		.dq_label = "com.apple.root.user-initiated-qos",
+		.dq_serialnum = 12,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INITIATED, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.user-initiated-qos.overcommit",
+		.dq_serialnum = 13,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INTERACTIVE, 0,
+		.dq_label = "com.apple.root.user-interactive-qos",
+		.dq_serialnum = 14,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INTERACTIVE, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.user-interactive-qos.overcommit",
+		.dq_serialnum = 15,
+	),
+};
+```
+И целевая очередь в таком случае будет выбрана с `QoS` и флагом `overcommit` создаваемой очереди.
+```c
+if (!tq) {
+	tq = _dispatch_get_root_queue(
+		qos == DISPATCH_QOS_UNSPECIFIED ? DISPATCH_QOS_DEFAULT : qos,
+		overcommit == _dispatch_queue_attr_overcommit_enabled)->_as_dq;
 		if (unlikely(!tq)) {
 			DISPATCH_CLIENT_CRASH(qos, "Invalid queue attribute");
 		}
 	}
-
-	//
-	// Step 2: Initialize the queue
-	//
-
-	if (legacy) {
-		// if any of these attributes is specified, use non legacy classes
-		if (dqai.dqai_inactive || dqai.dqai_autorelease_frequency) {
-			legacy = false;
-		}
-	}
-
-	const void *vtable;
-	dispatch_queue_flags_t dqf = legacy ? DQF_MUTABLE : 0;
-	if (dqai.dqai_concurrent) {
-		vtable = DISPATCH_VTABLE(queue_concurrent);
-	} else {
-		vtable = DISPATCH_VTABLE(queue_serial);
-	}
-	switch (dqai.dqai_autorelease_frequency) {
-	case DISPATCH_AUTORELEASE_FREQUENCY_NEVER:
-		dqf |= DQF_AUTORELEASE_NEVER;
-		break;
-	case DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM:
-		dqf |= DQF_AUTORELEASE_ALWAYS;
-		break;
-	}
-	if (label) {
-		const char *tmp = _dispatch_strdup_if_mutable(label);
-		if (tmp != label) {
-			dqf |= DQF_LABEL_NEEDS_FREE;
-			label = tmp;
-		}
-	}
-
-	dispatch_lane_t dq = _dispatch_object_alloc(vtable,
-			sizeof(struct dispatch_lane_s));
-	_dispatch_queue_init(dq, dqf, dqai.dqai_concurrent ?
-			DISPATCH_QUEUE_WIDTH_MAX : 1, DISPATCH_QUEUE_ROLE_INNER |
-			(dqai.dqai_inactive ? DISPATCH_QUEUE_INACTIVE : 0));
-
-	dq->dq_label = label;
-	dq->dq_priority = _dispatch_priority_make((dispatch_qos_t)dqai.dqai_qos,
-			dqai.dqai_relpri);
-	if (overcommit == _dispatch_queue_attr_overcommit_enabled) {
-		dq->dq_priority |= DISPATCH_PRIORITY_FLAG_OVERCOMMIT;
-	}
-	if (!dqai.dqai_inactive) {
-		_dispatch_queue_priority_inherit_from_target(dq, tq);
-		_dispatch_lane_inherit_wlh_from_target(dq, tq);
-	}
-	_dispatch_retain(tq);
-	dq->do_targetq = tq;
-	_dispatch_object_debug(dq, "%s", __func__);
-	return _dispatch_trace_queue_create(dq)._dq;
-}
 ```
-Нас интересует кусок кода c обработкой расхождений между атрибутами очереди и целевой очередью
-```c
-	if (tq && dx_type(tq) == DISPATCH_QUEUE_GLOBAL_ROOT_TYPE) {
-		// Handle discrepancies between attr and target queue, attributes win
-		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
-			if (tq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT) {
-				overcommit = _dispatch_queue_attr_overcommit_enabled;
-			} else {
-				overcommit = _dispatch_queue_attr_overcommit_disabled;
-			}
-		}
-		if (qos == DISPATCH_QOS_UNSPECIFIED) {
-			qos = _dispatch_priority_qos(tq->dq_priority);
-		}
-		tq = NULL;
-	} else if (tq && !tq->do_targetq) {
-		// target is a pthread or runloop root queue, setting QoS or overcommit
-		// is disallowed
-		if (overcommit != _dispatch_queue_attr_overcommit_unspecified) {
-			DISPATCH_CLIENT_CRASH(tq, "Cannot specify an overcommit attribute "
-					"and use this kind of target queue");
-		}
-	} else {
-		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
-			// Serial queues default to overcommit!
-			overcommit = dqai.dqai_concurrent ?
-					_dispatch_queue_attr_overcommit_disabled :
-					_dispatch_queue_attr_overcommit_enabled;
-		}
-	}
-```
-Здесь можно заметить, что если есть целевая очередь `tq`, и она корневая (только глобальные очереди имеют тип `DISPATCH_QUEUE_GLOBAL_ROOT_TYPE`), то если мы передаем флаг `overcommit` как `_dispatch_queue_attr_overcommit_unspecified`, то этот флаг наследуется от целевой очереди.  
-А если целевая очередь не является глобальной, то флаг `overcommit` устанавливается как отключенный `_dispatch_queue_attr_overcommit_disabled` для конкурентных очередей или включенный `_dispatch_queue_attr_overcommit_enabled` для последовательных.
