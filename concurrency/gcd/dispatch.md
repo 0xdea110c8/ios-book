@@ -12,6 +12,7 @@
 - [Механизмы работы очередей](#механизмы-работы-очередей)
   - [Проблемы документации](#проблемы-документации)
   - [Различия глобальных и созданных очередей](#различия-глобальных-и-созданных-очередей)
+  - [Механизм связки очереди и лэйна](#механизм-связки-очереди-и-лэйна)
   - [Ограничение максимального количества потоков](#ограничение-максимального-количества-потоков)
 # Dispatch
 ### Описание
@@ -166,8 +167,82 @@
   - вспомогательная блокировка `dq_sidelock`.
 > [!Note]
 > Отсюда и далее я буду называть глобальную очередь очередью а созданную очередь лэйном для удобства формулировок, разделения объектов и запоминания механизма.
-## Ограничение максимального количества потоков
-`wq_max_threads` - параметр ядра, задающий ограничение на максимальное количество потоков в пуле, доступном процессу. Динамически рассчитывается на основе количества процессоров
+### Механизм связки очереди и лэйна
+
+### Обход ограничения максимального количества потоков
+У ядра есть параметр `wq_max_threads`, задающий ограничение на максимальное количество потоков в пуле, доступном процессу. Предотвращает перегрев процессора и траты процессорного времени на переключение контекста потоков, и, как следствие, троттлинга. Динамически рассчитывается на основе количества логических ядер процессора, умноженного на коэффициент масштабирования.
+
+Но в случае, если все потоки уже заблокированы на выполнении задач, то новым задачам просто негде выполняться. В этом случае можно игнорировать ограничение максимального числа потоков в жертву сохранению `forward progress` приложения. Для этого у приложения существует по паре глобальных очередей на каждый `quality of service`:
+```c
+struct dispatch_queue_global_s _dispatch_root_queues[] = {
+#define _DISPATCH_ROOT_QUEUE_IDX(n, flags) \
+		((flags & DISPATCH_PRIORITY_FLAG_OVERCOMMIT) ? \
+		DISPATCH_ROOT_QUEUE_IDX_##n##_QOS_OVERCOMMIT : \
+		DISPATCH_ROOT_QUEUE_IDX_##n##_QOS)
+#define _DISPATCH_ROOT_QUEUE_ENTRY(n, flags, ...) \
+	[_DISPATCH_ROOT_QUEUE_IDX(n, flags)] = { \
+		DISPATCH_GLOBAL_OBJECT_HEADER(queue_global), \
+		.dq_state = DISPATCH_ROOT_QUEUE_STATE_INIT_VALUE, \
+		.do_ctxt = _dispatch_root_queue_ctxt(_DISPATCH_ROOT_QUEUE_IDX(n, flags)), \
+		.dq_atomic_flags = DQF_WIDTH(DISPATCH_QUEUE_WIDTH_POOL), \
+		.dq_priority = flags | ((flags & DISPATCH_PRIORITY_FLAG_FALLBACK) ? \
+				_dispatch_priority_make_fallback(DISPATCH_QOS_##n) : \
+				_dispatch_priority_make(DISPATCH_QOS_##n, 0)), \
+		__VA_ARGS__ \
+	}
+	_DISPATCH_ROOT_QUEUE_ENTRY(MAINTENANCE, 0,
+		.dq_label = "com.apple.root.maintenance-qos",
+		.dq_serialnum = 4,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(MAINTENANCE, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.maintenance-qos.overcommit",
+		.dq_serialnum = 5,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(BACKGROUND, 0,
+		.dq_label = "com.apple.root.background-qos",
+		.dq_serialnum = 6,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(BACKGROUND, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.background-qos.overcommit",
+		.dq_serialnum = 7,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(UTILITY, 0,
+		.dq_label = "com.apple.root.utility-qos",
+		.dq_serialnum = 8,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(UTILITY, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.utility-qos.overcommit",
+		.dq_serialnum = 9,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(DEFAULT, DISPATCH_PRIORITY_FLAG_FALLBACK,
+		.dq_label = "com.apple.root.default-qos",
+		.dq_serialnum = 10,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(DEFAULT,
+			DISPATCH_PRIORITY_FLAG_FALLBACK | DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.default-qos.overcommit",
+		.dq_serialnum = 11,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INITIATED, 0,
+		.dq_label = "com.apple.root.user-initiated-qos",
+		.dq_serialnum = 12,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INITIATED, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.user-initiated-qos.overcommit",
+		.dq_serialnum = 13,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INTERACTIVE, 0,
+		.dq_label = "com.apple.root.user-interactive-qos",
+		.dq_serialnum = 14,
+	),
+	_DISPATCH_ROOT_QUEUE_ENTRY(USER_INTERACTIVE, DISPATCH_PRIORITY_FLAG_OVERCOMMIT,
+		.dq_label = "com.apple.root.user-interactive-qos.overcommit",
+		.dq_serialnum = 15,
+	),
+};
+```
+Очереди с `DISPATCH_PRIORITY_FLAG_OVERCOMMIT` игнорируют `wq_max_threads` при запросе на создание нового потока. 
+
 
 
 
