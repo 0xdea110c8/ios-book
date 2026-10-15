@@ -406,7 +406,7 @@ _dispatch_continuation_redirect_push(dispatch_lane_t dl,
 	dx_push(dq, dou, qos);
 }
 ```
-В котором мы вызываем `dx_push` уже на целевой очереди лэйна. В противном случае вызывается `_dispatch_lane_push`, как и у последовательного лэйна.
+В котором мы вызываем `dx_push` уже на целевой очереди лэйна. В противном случае вызывается `_dispatch_lane_push`.
 ### В последовательном лэйне
 В таблице `dq_push` соответствует методу `_dispatch_lane_push`
 ```c
