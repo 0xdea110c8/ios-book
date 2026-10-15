@@ -309,6 +309,8 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 - `lane` - оверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 ## Вызов async 
 При вызове `queue.async` в `libdispatch` вызывается `dispatch_async`
+<details>
+<summary>dispatch_async</summary>
 ```c
 #ifdef __BLOCKS__
 void
@@ -323,7 +325,12 @@ dispatch_async(dispatch_queue_t dq, dispatch_block_t work)
 }
 #endif
 ```
+</details>
+
 Из него вызывается `_dispatch_continuation_async`
+<details>
+<summary></summary>
+</details>
 ```c
 DISPATCH_ALWAYS_INLINE
 static inline void
@@ -340,7 +347,10 @@ _dispatch_continuation_async(dispatch_queue_class_t dqu,
 	return dx_push(dqu._dq, dc, qos);
 }
 ```
-`dx_push` это макрос, достающий метод `dq_push` из `vtable` очереди (да-да, табличная диспетчеризация):
+`dx_push` это макрос, достающий метод `dq_push` из `vtable` очереди (да-да, табличная диспетчеризация)
+<details>
+<summary></summary>
+</details>
 ```c
 #define dx_push(x, y, z) dx_vtable(x)->dq_push(x, y, z)
 ```
@@ -385,6 +395,9 @@ _dispatch_queue_try_acquire_async(dispatch_lane_t dq)
 }
 ```
 Вызывается `_dispatch_continuation_redirect_push`
+<details>
+<summary></summary>
+</details>
 ```c
 DISPATCH_NOINLINE
 static void
@@ -500,3 +513,6 @@ _dispatch_root_queue_push(dispatch_queue_global_t rq, dispatch_object_t dou,
 #endif
 	_dispatch_root_queue_push_inline(rq, dou, dou, 1);
 }
+<details>
+<summary></summary>
+</details>
