@@ -303,3 +303,18 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 В таком случае:
 - `intermediateLane` - неоверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 - `lane` - оверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
+### Вызов async 
+```c
+#ifdef __BLOCKS__
+void
+dispatch_async(dispatch_queue_t dq, dispatch_block_t work)
+{
+	dispatch_continuation_t dc = _dispatch_continuation_alloc();
+	uintptr_t dc_flags = DC_FLAG_CONSUME;
+	dispatch_qos_t qos;
+
+	qos = _dispatch_continuation_init(dc, dq, work, 0, dc_flags);
+	_dispatch_continuation_async(dq, dc, qos, dc->dc_flags);
+}
+#endif
+```
