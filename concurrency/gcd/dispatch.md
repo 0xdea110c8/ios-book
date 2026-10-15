@@ -459,7 +459,173 @@ _dispatch_lane_push(dispatch_lane_t dq, dispatch_object_t dou,
 Если объект не ожидающий, при необходимости качество обслуживания повышается до качества обслуживания задачи и задача становится хвостом лэйна.  
 Если лэйн пустой, рабочий поток на другом ядре процессора может мгновенно проснуться, забрать единственную задачу, выполнить её, а код внутри этой задачи может уничтожить сам лэйн. Чтобы текущий поток не упал при попытке дописать код,  счетчик ссылок лэйна увеличивается на 2. И записываются флаги `DISPATCH_WAKEUP_CONSUME_2` и `DISPATCH_WAKEUP_MAKE_DIRTY`.  
 Если же лэйн не пустой, но повышено качество обслуживания, то счетчик ссылок лэйна увеличивается на 2 и записывается флаг `DISPATCH_WAKEUP_CONSUME_2`.  
-Затем лэйн соединяется с хвостом и, если есть флаги, лэйн будится вызовом `dx_wakeup`.
+Затем лэйн соединяется с хвостом и, если есть флаги, лэйн будится вызовом `dx_wakeup`.  
+`dx_wakeup` в `vtable` последовательных и конкурентных лэйнов соответствует `_dispatch_lane_wakeup`
+```c
+DISPATCH_NOINLINE
+void
+_dispatch_lane_wakeup(dispatch_lane_class_t dqu, dispatch_qos_t qos,
+		dispatch_wakeup_flags_t flags)
+{
+	dispatch_queue_wakeup_target_t target = DISPATCH_QUEUE_WAKEUP_NONE;
+
+	if (unlikely(flags & DISPATCH_WAKEUP_BARRIER_COMPLETE)) {
+		return _dispatch_lane_barrier_complete(dqu, qos, flags);
+	}
+	if (_dispatch_queue_class_probe(dqu)) {
+		target = DISPATCH_QUEUE_WAKEUP_TARGET;
+	}
+	return _dispatch_queue_wakeup(dqu, qos, flags, target);
+}
+```
+Если есть флаг барьера, вызывается метод завершения барьера. Если хвост не пустой
+```c
+DISPATCH_ALWAYS_INLINE
+static inline bool
+_dispatch_queue_class_probe(dispatch_lane_class_t dqu)
+{
+	struct dispatch_object_s *tail;
+	// seq_cst wrt atomic store to dq_state <rdar://problem/14637483>
+	// seq_cst wrt atomic store to dq_flags <rdar://problem/22623242>
+	tail = os_atomic_load2o(dqu._dl, dq_items_tail, ordered);
+	return unlikely(tail != NULL);
+}
+```
+То выставляется таргет `DISPATCH_QUEUE_WAKEUP_TARGET`. Затем вызывается метод `_dispatch_queue_wakeup`
+```c
+ISPATCH_NOINLINE
+void
+_dispatch_queue_wakeup(dispatch_queue_class_t dqu, dispatch_qos_t qos,
+		dispatch_wakeup_flags_t flags, dispatch_queue_wakeup_target_t target)
+{
+	dispatch_queue_t dq = dqu._dq;
+	dispatch_assert(target != DISPATCH_QUEUE_WAKEUP_WAIT_FOR_EVENT);
+
+	if (target && !(flags & DISPATCH_WAKEUP_CONSUME_2)) {
+		_dispatch_retain_2(dq);
+		flags |= DISPATCH_WAKEUP_CONSUME_2;
+	}
+
+	if (unlikely(flags & DISPATCH_WAKEUP_BARRIER_COMPLETE)) {
+		//
+		// _dispatch_lane_class_barrier_complete() is about what both regular
+		// queues and sources needs to evaluate, but the former can have sync
+		// handoffs to perform which _dispatch_lane_class_barrier_complete()
+		// doesn't handle, only _dispatch_lane_barrier_complete() does.
+		//
+		// _dispatch_lane_wakeup() is the one for plain queues that calls
+		// _dispatch_lane_barrier_complete(), and this is only taken for non
+		// queue types.
+		//
+		dispatch_assert(dx_metatype(dq) == _DISPATCH_SOURCE_TYPE);
+		qos = _dispatch_queue_wakeup_qos(dq, qos);
+		return _dispatch_lane_class_barrier_complete(upcast(dq)._dl, qos,
+				flags, target, DISPATCH_QUEUE_SERIAL_DRAIN_OWNED);
+	}
+
+	if (target) {
+		uint64_t old_state, new_state, enqueue = DISPATCH_QUEUE_ENQUEUED;
+		if (target == DISPATCH_QUEUE_WAKEUP_MGR) {
+			enqueue = DISPATCH_QUEUE_ENQUEUED_ON_MGR;
+		}
+		qos = _dispatch_queue_wakeup_qos(dq, qos);
+		os_atomic_rmw_loop2o(dq, dq_state, old_state, new_state, release, {
+			new_state = _dq_state_merge_qos(old_state, qos);
+			if (likely(!_dq_state_is_suspended(old_state) &&
+					!_dq_state_is_enqueued(old_state) &&
+					(!_dq_state_drain_locked(old_state) ||
+					(enqueue != DISPATCH_QUEUE_ENQUEUED_ON_MGR &&
+					_dq_state_is_base_wlh(old_state))))) {
+				new_state |= enqueue;
+			}
+			if (flags & DISPATCH_WAKEUP_MAKE_DIRTY) {
+				new_state |= DISPATCH_QUEUE_DIRTY;
+			} else if (new_state == old_state) {
+				os_atomic_rmw_loop_give_up(goto done);
+			}
+		});
+
+		if (likely((old_state ^ new_state) & enqueue)) {
+			dispatch_queue_t tq;
+			if (target == DISPATCH_QUEUE_WAKEUP_TARGET) {
+				// the rmw_loop above has no acquire barrier, as the last block
+				// of a queue asyncing to that queue is not an uncommon pattern
+				// and in that case the acquire would be completely useless
+				//
+				// so instead use depdendency ordering to read
+				// the targetq pointer.
+				os_atomic_thread_fence(dependency);
+				tq = os_atomic_load_with_dependency_on2o(dq, do_targetq,
+						(long)new_state);
+			} else {
+				tq = target;
+			}
+			dispatch_assert(_dq_state_is_enqueued(new_state));
+			return _dispatch_queue_push_queue(tq, dq, new_state);
+		}
+#if HAVE_PTHREAD_WORKQUEUE_QOS
+		if (unlikely((old_state ^ new_state) & DISPATCH_QUEUE_MAX_QOS_MASK)) {
+			if (_dq_state_should_override(new_state)) {
+				return _dispatch_queue_wakeup_with_override(dq, new_state,
+						flags);
+			}
+		}
+	} else if (qos) {
+		//
+		// Someone is trying to override the last work item of the queue.
+		//
+		uint64_t old_state, new_state;
+		os_atomic_rmw_loop2o(dq, dq_state, old_state, new_state, relaxed, {
+			if (!_dq_state_drain_locked(old_state) ||
+					!_dq_state_is_enqueued(old_state)) {
+				os_atomic_rmw_loop_give_up(goto done);
+			}
+			new_state = _dq_state_merge_qos(old_state, qos);
+			if (new_state == old_state) {
+				os_atomic_rmw_loop_give_up(goto done);
+			}
+		});
+		if (_dq_state_should_override(new_state)) {
+			return _dispatch_queue_wakeup_with_override(dq, new_state, flags);
+		}
+#endif // HAVE_PTHREAD_WORKQUEUE_QOS
+	}
+done:
+	if (likely(flags & DISPATCH_WAKEUP_CONSUME_2)) {
+		return _dispatch_release_2_tailcall(dq);
+	}
+}
+```
+```c
+DISPATCH_NOINLINE
+static void
+_dispatch_lane_barrier_complete(dispatch_lane_class_t dqu, dispatch_qos_t qos,
+		dispatch_wakeup_flags_t flags)
+{
+	dispatch_queue_wakeup_target_t target = DISPATCH_QUEUE_WAKEUP_NONE;
+	dispatch_lane_t dq = dqu._dl;
+
+	if (dq->dq_items_tail && !DISPATCH_QUEUE_IS_SUSPENDED(dq)) {
+		struct dispatch_object_s *dc = _dispatch_queue_get_head(dq);
+		if (likely(dq->dq_width == 1 || _dispatch_object_is_barrier(dc))) {
+			if (_dispatch_object_is_waiter(dc)) {
+				return _dispatch_lane_drain_barrier_waiter(dq, dc, flags, 0);
+			}
+		} else if (dq->dq_width > 1 && !_dispatch_object_is_barrier(dc)) {
+			return _dispatch_lane_drain_non_barriers(dq, dc, flags);
+		}
+
+		if (!(flags & DISPATCH_WAKEUP_CONSUME_2)) {
+			_dispatch_retain_2(dq);
+			flags |= DISPATCH_WAKEUP_CONSUME_2;
+		}
+		target = DISPATCH_QUEUE_WAKEUP_TARGET;
+	}
+
+	uint64_t owned = DISPATCH_QUEUE_IN_BARRIER +
+			dq->dq_width * DISPATCH_QUEUE_WIDTH_INTERVAL;
+	return _dispatch_lane_class_barrier_complete(dq, qos, flags, target, owned);
+}
 ### В глобальной очереди
 ```c
 DISPATCH_NOINLINE
