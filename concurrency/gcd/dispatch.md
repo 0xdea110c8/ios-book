@@ -306,7 +306,7 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 - `intermediateLane` - неоверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 - `lane` - оверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 ## Вызов async 
-При вызове `queue.async` в `libdispatch` вызывается `dispatch_async`:
+При вызове `queue.async` в `libdispatch` вызывается `dispatch_async`
 ```c
 #ifdef __BLOCKS__
 void
@@ -321,7 +321,7 @@ dispatch_async(dispatch_queue_t dq, dispatch_block_t work)
 }
 #endif
 ```
-Из него вызывается `_dispatch_continuation_async`:
+Из него вызывается `_dispatch_continuation_async`
 ```c
 DISPATCH_ALWAYS_INLINE
 static inline void
@@ -343,6 +343,7 @@ _dispatch_continuation_async(dispatch_queue_class_t dqu,
 #define dx_push(x, y, z) dx_vtable(x)->dq_push(x, y, z)
 ```
 ### В конкурентном лэйне
+В таблице `dq_push` соответствует методу `_dispatch_lane_concurrent_push`
 ```c
 DISPATCH_NOINLINE
 void
@@ -363,6 +364,25 @@ _dispatch_lane_concurrent_push(dispatch_lane_t dq, dispatch_object_t dou,
 	_dispatch_lane_push(dq, dou, qos);
 }
 ```
+Если нет хвоста очереди (очередь пуста), объект не ожидающий и не барьерный, и возможно выделить слот под выполнение из текущей очереди в методе `_dispatch_queue_try_acquire_async`
+```c
+DISPATCH_ALWAYS_INLINE DISPATCH_WARN_RESULT
+static inline bool
+_dispatch_queue_try_acquire_async(dispatch_lane_t dq)
+{
+	uint64_t old_state, new_state;
+
+	return os_atomic_rmw_loop2o(dq, dq_state, old_state, new_state, acquire, {
+		if (unlikely(!_dq_state_is_runnable(old_state) ||
+				_dq_state_is_dirty(old_state) ||
+				_dq_state_has_pending_barrier(old_state))) {
+			os_atomic_rmw_loop_give_up(return false);
+		}
+		new_state = old_state + DISPATCH_QUEUE_WIDTH_INTERVAL;
+	});
+}
+```
+Вызывается `_dispatch_continuation_redirect_push`
 ```c
 DISPATCH_NOINLINE
 static void
@@ -384,6 +404,9 @@ _dispatch_continuation_redirect_push(dispatch_lane_t dl,
 	dx_push(dq, dou, qos);
 }
 ```
+В котором мы вызываем `dx_push` уже на целевой очереди лэйна. В противном случае вызывается `_dispatch_lane_push`, как и у последовательного лэйна.
+### В последовательном лэйне
+В таблице `dq_push` соответствует методу `_dispatch_lane_push`
 ```c
 DISPATCH_NOINLINE
 void
