@@ -596,36 +596,6 @@ done:
 	}
 }
 ```
-```c
-DISPATCH_NOINLINE
-static void
-_dispatch_lane_barrier_complete(dispatch_lane_class_t dqu, dispatch_qos_t qos,
-		dispatch_wakeup_flags_t flags)
-{
-	dispatch_queue_wakeup_target_t target = DISPATCH_QUEUE_WAKEUP_NONE;
-	dispatch_lane_t dq = dqu._dl;
-
-	if (dq->dq_items_tail && !DISPATCH_QUEUE_IS_SUSPENDED(dq)) {
-		struct dispatch_object_s *dc = _dispatch_queue_get_head(dq);
-		if (likely(dq->dq_width == 1 || _dispatch_object_is_barrier(dc))) {
-			if (_dispatch_object_is_waiter(dc)) {
-				return _dispatch_lane_drain_barrier_waiter(dq, dc, flags, 0);
-			}
-		} else if (dq->dq_width > 1 && !_dispatch_object_is_barrier(dc)) {
-			return _dispatch_lane_drain_non_barriers(dq, dc, flags);
-		}
-
-		if (!(flags & DISPATCH_WAKEUP_CONSUME_2)) {
-			_dispatch_retain_2(dq);
-			flags |= DISPATCH_WAKEUP_CONSUME_2;
-		}
-		target = DISPATCH_QUEUE_WAKEUP_TARGET;
-	}
-
-	uint64_t owned = DISPATCH_QUEUE_IN_BARRIER +
-			dq->dq_width * DISPATCH_QUEUE_WIDTH_INTERVAL;
-	return _dispatch_lane_class_barrier_complete(dq, qos, flags, target, owned);
-}
 ### В глобальной очереди
 ```c
 DISPATCH_NOINLINE
