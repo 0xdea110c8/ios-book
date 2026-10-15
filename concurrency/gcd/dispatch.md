@@ -8,12 +8,13 @@
     - [Конкурентная очередь](#конкурентная-очередь)
   - [Получение очереди](#получение-очереди)
   - [Качество обслуживания](#качество-обслуживания)
-  - [Механизмы очередей](#механизмы-очередей)
-    - [Проблемы документации](#проблемы-документации)
-    - [Различия глобальных и созданных очередей](#различия-глобальных-и-созданных-очередей)
-    - [Граф очередей](#граф-очередей)
-    - [Оверкоммитные очереди](#оверкоммитные-очереди)
-    - [Оверкоммит лэйна и его глобальной очереди](#оверкоммит-лэйна-и-его-глобальной-очереди)
+- [Механизмы очередей](#механизмы-очередей)
+  - [Проблемы документации](#проблемы-документации)
+  - [Различия глобальных и созданных очередей](#различия-глобальных-и-созданных-очередей)
+  - [Граф очередей](#граф-очередей)
+  - [Оверкоммитные очереди](#оверкоммитные-очереди)
+  - [Оверкоммит лэйна и его глобальной очереди](#оверкоммит-лэйна-и-его-глобальной-очереди)
+  - [Вызов async](#вызов-async)
 # Dispatch
 ### Описание
 Кроссплатформенный фреймворк для управления многопоточностью и конкурентного выполнения задач. Берёт на себя 
@@ -115,8 +116,8 @@
 > ```c
 > qos == DISPATCH_QOS_UNSPECIFIED ? DISPATCH_QOS_DEFAULT : qos
 > ```
-## Механизмы очередей
-### Проблемы документации
+# Механизмы очередей
+## Проблемы документации
 В [документации Apple](https://developer.apple.com/documentation/dispatch/dispatchqueue#Avoiding-Excessive-Thread-Creation) указано избегать создания избыточных потоков:
 > При проектировании задач для конкурентного выполнения избегайте вызова методов, блокирующих текущий поток. Когда задача, запланированная в конкурентной очереди, блокирует поток, система создает дополнительные потоки для выполнения других задач из очереди. Если слишком много задач вызывают блокировку, у вашего приложения может закончиться доступный лимит потоков.  
 Еще одна причина чрезмерного потребления потоков приложением — создание слишком большого количества конкурентных очередей. Поскольку каждая очередь расходует ресурсы потоков, создание дополнительных конкурентных очередей усугубляет проблему их избыточного потребления. Вместо создания собственных конкурентных очередей передавайте задачи в одну из глобальных очередей.  
@@ -127,7 +128,7 @@
 - Почему надо передавать задачи в глобальные конкурентные очереди вместо своих конкурентных?
 - Почему для последовательной очереди надо назначать глобальную, а не, например, другую последовательную?
 - Почему при передаче в глобальную конкурентную очередь сохранится последовательный порядок выполнения?
-### Различия глобальных и созданных очередей
+## Различия глобальных и созданных очередей
 Если посмотреть на их структуру в коде `libdispatch`:
 - Глобальная очередь - это `dispatch_queue_global_s`
   ```c
@@ -168,12 +169,12 @@
   - вспомогательная блокировка `dq_sidelock`.
 > [!Note]
 > Отсюда и далее я буду называть созданную очередь лэйном для удобства формулировок, разделения объектов и запоминания механизма.
-### Граф очередей
+## Граф очередей
 Когда мы создаём лэйн в Swift, у нас есть аргумент `target`, в котором может быть глобальная очередь или лэйн. Это позволяет динамически конструировать граф очередей. Каждая очередь, включая лэйны, является нодой графа, а указатели на `target` выступают в роли направленного ребра, связывающего дочернюю очередь с родительской. В итоге терминальными нодами этого графа становятся глобальные очереди приложения.
 
 Так как граф должен сохранять древовидную структуру без циклов, закольцевание двух лэйнов на самих себя приведёт к крашу. Кроме того, если оставить аргумент `target` с дефолтным значением `nil` или же явно передать туда `nil`, `libdispatch` присвоит лэйну глобальную очередь с соответствующим качеством обслуживания в качестве таргета.
 
-### Оверкоммитные очереди
+## Оверкоммитные очереди
 У ядра есть параметр `wq_max_threads`, задающий ограничение на максимальное количество потоков в пуле, доступном процессу. Предотвращает перегрев процессора и траты процессорного времени на переключение контекста потоков, и, как следствие, троттлинга. Динамически рассчитывается на основе количества логических ядер процессора, умноженного на коэффициент масштабирования.
 
 Но в случае, если все потоки уже заблокированы на выполнении задач, то новым задачам просто негде выполняться. В этом случае можно игнорировать ограничение максимального числа потоков в жертву сохранению `forward progress` приложения. Для этого у приложения существует по паре глобальных очередей на каждое качество обслуживания:
@@ -246,7 +247,7 @@ struct dispatch_queue_global_s _dispatch_root_queues[] = {
 };
 ```
 Очереди с `DISPATCH_PRIORITY_FLAG_OVERCOMMIT` игнорируют `wq_max_threads` при запросе на создание нового потока. 
-### Оверкоммит лэйна и его глобальной очереди
+## Оверкоммит лэйна и его глобальной очереди
 В Swift при получении глобальной очереди вызовом `DispatchQueue.global(qos:)` отдается её неоверкоммитный вариант. Возможности выставить флаг оверкоммита лэйну тоже нет. Поэтому, чтобы выяснить, как вообще лэйн может попасть в оверкоммитную очередь, следует обратиться к исходникам `libdispatch`. Нас интересует кусок кода создания лэйна.
 ```c
 if (tq && dx_type(tq) == DISPATCH_QUEUE_GLOBAL_ROOT_TYPE) {
@@ -303,7 +304,8 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 В таком случае:
 - `intermediateLane` - неоверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 - `lane` - оверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
-### Вызов async 
+## Вызов async 
+При вызове `queue.async` в `libdispatch` вызывается `dispatch_async`:
 ```c
 #ifdef __BLOCKS__
 void
@@ -318,3 +320,157 @@ dispatch_async(dispatch_queue_t dq, dispatch_block_t work)
 }
 #endif
 ```
+Из него вызывается `_dispatch_continuation_async`:
+```c
+DISPATCH_ALWAYS_INLINE
+static inline void
+_dispatch_continuation_async(dispatch_queue_class_t dqu,
+		dispatch_continuation_t dc, dispatch_qos_t qos, uintptr_t dc_flags)
+{
+#if DISPATCH_INTROSPECTION
+	if (!(dc_flags & DC_FLAG_NO_INTROSPECTION)) {
+		_dispatch_trace_item_push(dqu, dc);
+	}
+#else
+	(void)dc_flags;
+#endif
+	return dx_push(dqu._dq, dc, qos);
+}
+```
+`dx_push` это макрос, достающий метод `dq_push` из `vtable` очереди (да-да, табличная диспетчеризация):
+```c
+#define dx_push(x, y, z) dx_vtable(x)->dq_push(x, y, z)
+```
+### В конкурентном лэйне
+```c
+DISPATCH_NOINLINE
+void
+_dispatch_lane_concurrent_push(dispatch_lane_t dq, dispatch_object_t dou,
+		dispatch_qos_t qos)
+{
+	// <rdar://problem/24738102&24743140> reserving non barrier width
+	// doesn't fail if only the ENQUEUED bit is set (unlike its barrier
+	// width equivalent), so we have to check that this thread hasn't
+	// enqueued anything ahead of this call or we can break ordering
+	if (dq->dq_items_tail == NULL &&
+			!_dispatch_object_is_waiter(dou) &&
+			!_dispatch_object_is_barrier(dou) &&
+			_dispatch_queue_try_acquire_async(dq)) {
+		return _dispatch_continuation_redirect_push(dq, dou, qos);
+	}
+
+	_dispatch_lane_push(dq, dou, qos);
+}
+```
+```c
+DISPATCH_NOINLINE
+static void
+_dispatch_continuation_redirect_push(dispatch_lane_t dl,
+		dispatch_object_t dou, dispatch_qos_t qos)
+{
+	if (likely(!_dispatch_object_is_redirection(dou))) {
+		dou._dc = _dispatch_async_redirect_wrap(dl, dou);
+	} else if (!dou._dc->dc_ctxt) {
+		// find first queue in descending target queue order that has
+		// an autorelease frequency set, and use that as the frequency for
+		// this continuation.
+		dou._dc->dc_ctxt = (void *)
+		(uintptr_t)_dispatch_queue_autorelease_frequency(dl);
+	}
+
+	dispatch_queue_t dq = dl->do_targetq;
+	if (!qos) qos = _dispatch_priority_qos(dq->dq_priority);
+	dx_push(dq, dou, qos);
+}
+```
+```c
+DISPATCH_NOINLINE
+void
+_dispatch_lane_push(dispatch_lane_t dq, dispatch_object_t dou,
+		dispatch_qos_t qos)
+{
+	dispatch_wakeup_flags_t flags = 0;
+	struct dispatch_object_s *prev;
+
+	if (unlikely(_dispatch_object_is_waiter(dou))) {
+		return _dispatch_lane_push_waiter(dq, dou._dsc, qos);
+	}
+
+	dispatch_assert(!_dispatch_object_is_global(dq));
+	qos = _dispatch_queue_push_qos(dq, qos);
+
+	// If we are going to call dx_wakeup(), the queue must be retained before
+	// the item we're pushing can be dequeued, which means:
+	// - before we exchange the tail if we have to override
+	// - before we set the head if we made the queue non empty.
+	// Otherwise, if preempted between one of these and the call to dx_wakeup()
+	// the blocks submitted to the queue may release the last reference to the
+	// queue when invoked by _dispatch_lane_drain. <rdar://problem/6932776>
+
+	prev = os_mpsc_push_update_tail(os_mpsc(dq, dq_items), dou._do, do_next);
+	if (unlikely(os_mpsc_push_was_empty(prev))) {
+		_dispatch_retain_2_unsafe(dq);
+		flags = DISPATCH_WAKEUP_CONSUME_2 | DISPATCH_WAKEUP_MAKE_DIRTY;
+	} else if (unlikely(_dispatch_queue_need_override(dq, qos))) {
+		// There's a race here, _dispatch_queue_need_override may read a stale
+		// dq_state value.
+		//
+		// If it's a stale load from the same drain streak, given that
+		// the max qos is monotonic, too old a read can only cause an
+		// unnecessary attempt at overriding which is harmless.
+		//
+		// We'll assume here that a stale load from an a previous drain streak
+		// never happens in practice.
+		_dispatch_retain_2_unsafe(dq);
+		flags = DISPATCH_WAKEUP_CONSUME_2;
+	}
+	os_mpsc_push_update_prev(os_mpsc(dq, dq_items), prev, dou._do, do_next);
+	if (flags) {
+		return dx_wakeup(dq, qos, flags);
+	}
+}
+```
+
+```c
+DISPATCH_NOINLINE
+void
+_dispatch_root_queue_push(dispatch_queue_global_t rq, dispatch_object_t dou,
+		dispatch_qos_t qos)
+{
+#if DISPATCH_USE_KEVENT_WORKQUEUE
+	dispatch_deferred_items_t ddi = _dispatch_deferred_items_get();
+	if (unlikely(ddi && ddi->ddi_can_stash)) {
+		dispatch_object_t old_dou = ddi->ddi_stashed_dou;
+		dispatch_priority_t rq_overcommit;
+		rq_overcommit = rq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT;
+
+		if (likely(!old_dou._do || rq_overcommit)) {
+			dispatch_queue_global_t old_rq = ddi->ddi_stashed_rq;
+			dispatch_qos_t old_qos = ddi->ddi_stashed_qos;
+			ddi->ddi_stashed_rq = rq;
+			ddi->ddi_stashed_dou = dou;
+			ddi->ddi_stashed_qos = qos;
+			_dispatch_debug("deferring item %p, rq %p, qos %d",
+					dou._do, rq, qos);
+			if (rq_overcommit) {
+				ddi->ddi_can_stash = false;
+			}
+			if (likely(!old_dou._do)) {
+				return;
+			}
+			// push the previously stashed item
+			qos = old_qos;
+			rq = old_rq;
+			dou = old_dou;
+		}
+	}
+#endif
+#if HAVE_PTHREAD_WORKQUEUE_QOS
+	if (_dispatch_root_queue_push_needs_override(rq, qos)) {
+		return _dispatch_root_queue_push_override(rq, dou, qos);
+	}
+#else
+	(void)qos;
+#endif
+	_dispatch_root_queue_push_inline(rq, dou, dou, 1);
+}
