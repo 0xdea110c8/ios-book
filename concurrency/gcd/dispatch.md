@@ -60,7 +60,7 @@
 1. Получить главную очередь вызовом `DispatchQueue.main`
    > [Из документации Apple](https://developer.apple.com/documentation/dispatch/dispatchqueue/main):  
    > Очередь диспетчеризации, связанная с основным потоком текущего процесса.
-2. Получить одну из глобальных очередей вызовом `DispatchQueue(qos:)`
+2. Получить одну из глобальных очередей вызовом `DispatchQueue.global(qos:)`
    > [Из документации Apple](https://developer.apple.com/documentation/dispatch/dispatchqueue/global(qos:)):  
    > Возвращает глобальную системную очередь с указанным классом качества обслуживания.
 3. Создать свою последовательную или конкурентную вызовом `DispatchQueue.init(label:qos:attributes:autoreleaseFrequency:target:)`
@@ -245,7 +245,54 @@ struct dispatch_queue_global_s _dispatch_root_queues[] = {
 };
 ```
 Очереди с `DISPATCH_PRIORITY_FLAG_OVERCOMMIT` игнорируют `wq_max_threads` при запросе на создание нового потока. 
+### asddasd
+В Swift при получении глобальной очереди вызовом `DispatchQueue.global(qos:)` отдается её неоверкоммитный вариант. Возможности выставить флаг оверкоммита лэйну тоже нет. Поэтому, чтобы выяснить, как вообще лэйн может попасть в оверкоммитную очередь, следует обратиться к исходникам `libdispatch`. Нас интересует кусок кода создания лэйна.
+```c
+if (tq && dx_type(tq) == DISPATCH_QUEUE_GLOBAL_ROOT_TYPE) {
+	// Handle discrepancies between attr and target queue, attributes win
+	if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
+		if (tq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT) {
+			overcommit = _dispatch_queue_attr_overcommit_enabled;
+		} else {
+			overcommit = _dispatch_queue_attr_overcommit_disabled;
+		}
+	}
+	if (qos == DISPATCH_QOS_UNSPECIFIED) {
+		qos = _dispatch_priority_qos(tq->dq_priority);
+	}
+	tq = NULL;
+} else if (tq && !tq->do_targetq) {
+	// target is a pthread or runloop root queue, setting QoS or overcommit
+	// is disallowed
+	if (overcommit != _dispatch_queue_attr_overcommit_unspecified) {
+		DISPATCH_CLIENT_CRASH(tq, "Cannot specify an overcommit attribute "
+				"and use this kind of target queue");
+	}
+} else {
+	if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
+		// Serial queues default to overcommit!
+		overcommit = dqai.dqai_concurrent ?
+				_dispatch_queue_attr_overcommit_disabled :
+				_dispatch_queue_attr_overcommit_enabled;
+	}
+}
+```
+Получается, что если целевая очередь передана, она глобальная, и флаг оверкоммита лэйну не выставлен, то флаг оверкоммита берется из бита флага оверкоммита целевой очереди. А вот если целевая очередь не глобальная и не поток/ранлуп, то последовательная очередь всегда становится оверкоммитной. И если целевая очередь отсутствует,
+```c
+if (!tq) {
+	tq = _dispatch_get_root_queue(
+		qos == DISPATCH_QOS_UNSPECIFIED ? DISPATCH_QOS_DEFAULT : qos,
+		overcommit == _dispatch_queue_attr_overcommit_enabled)->_as_dq;
+		if (unlikely(!tq)) {
+			DISPATCH_CLIENT_CRASH(qos, "Invalid queue attribute");
+		}
+	}
+```
+она получается из массива глобальных очередей с `QoS` и флагом оверкоммита, соответствующим `QoS` и флагу оверкоммита создаваемого лэйна.
 
+Таким образом: 
+- `DispatchQueue(label: "com.apple.queue")` - оверкоммитный последовательный лэйн.
+- `DispatchQueue(label: "com.apple.queue", target: DispatchQueue.global())` - неоверкоммитный последовательный лэйн.
 
 
 
