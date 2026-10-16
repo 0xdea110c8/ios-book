@@ -313,20 +313,18 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 - `_dispatch_continuation_async` возвращает `dx_push`.
 - `dx_push` - макрос, достающий значение `dq_push` из таблицы очереди (табличная диспетчеризация).
   - У конкурентного лэйна `dq_push` соответствует методу `_dispatch_lane_concurrent_push`.
-    - Вызывается `_dispatch_lane_concurrent_push`.
-      - Если лэйн пуст:
-        - Вызывается `_dispatch_continuation_redirect_push`.
-        - `_dispatch_continuation_redirect_push` вызывает `dx_push` на целевой очереди лэйна.
-      - Если лэйн не пуст:
-        - Вызывается `_dispatch_lane_push`.
-          - Закидывает задачу в хвост лэйна.
-          - Если нужно повысить приоритет уже обрабатываемого лэйна
-            - Вызывается `dx_wakeup`.
+    - Если лэйн пуст:
+      - Вызывается `_dispatch_continuation_redirect_push`.
+        - Вызывается `dx_push` на целевой очереди лэйна.
+    - Если лэйн не пуст:
+      - Вызывается `_dispatch_lane_push`.
+        - Закидывает задачу в хвост лэйна.
+        - Если нужно повысить приоритет уже обрабатываемого лэйна:
+          - Вызывается `dx_wakeup`.
   - У последовательного лэйна `dq_push` соответствует методу `_dispatch_lane_push`.
-    - Вызывается `_dispatch_lane_push`.
-      - Закидывает задачу в хвост лэйна.
-      - Если нужно повысить приоритет уже обрабатываемого лэйна:
-        - Вызывается `dx_wakeup`.
+    - Закидывает задачу в хвост лэйна.
+    - Если нужно повысить приоритет уже обрабатываемого лэйна:
+      - Вызывается `dx_wakeup`.
   - У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push`.
     - Вызывается `_dispatch_root_queue_push`.
       - Если очередь может класть задачи в буфер отложенных:
