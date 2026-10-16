@@ -307,162 +307,38 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 В таком случае:
 - `intermediateLane` - неоверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 - `lane` - оверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
-## Вызов async 
-При вызове `queue.async` 
+## Вызов async
 1. В `libdispatch` вызывается `dispatch_async`.
-2. В `dispatch_async` вызывается `_dispatch_continuation_async`, который возвращает `dx_push`.
-3. `dx_push` это макрос, достающий метод `dq_push` из `vtable` очереди (да-да, табличная диспетчеризация).
-4.
-  - В конкурентном лэйне `dq_push` соответствует методу `_dispatch_lane_concurrent_push`.
-    - Если конкурентный лэйн пуст, вызывается `_dispatch_continuation_redirect_push`, в котором вызывается `dx_push` уже на целевой очереди лэйна.
-    - Если лэйн не пуст, то вызывается `_dispatch_lane_push`.
-  - В последовательном лэйне `dq_push` соответствует методу `_dispatch_lane_push`. 
-    - Задача закидывается в хвост лэйна.
-    - Если очередь спит (пуста) или нужно повысить приоритет, лэйн будится вызовом `dx_wakeup`.
-5. `dx_wakeup` в `vtable` последовательных и конкурентных лэйнов соответствует `_dispatch_lane_wakeup`.
-  - Если очередь не пуста, вызывается `_dispatch_queue_wakeup`.
-6. В `_dispatch_queue_wakeup`
-
- 
-
-То выставляется таргет `DISPATCH_QUEUE_WAKEUP_TARGET`. Затем вызывается метод `_dispatch_queue_wakeup`
-```c
-ISPATCH_NOINLINE
-void
-_dispatch_queue_wakeup(dispatch_queue_class_t dqu, dispatch_qos_t qos,
-		dispatch_wakeup_flags_t flags, dispatch_queue_wakeup_target_t target)
-{
-	dispatch_queue_t dq = dqu._dq;
-	dispatch_assert(target != DISPATCH_QUEUE_WAKEUP_WAIT_FOR_EVENT);
-
-	if (target && !(flags & DISPATCH_WAKEUP_CONSUME_2)) {
-		_dispatch_retain_2(dq);
-		flags |= DISPATCH_WAKEUP_CONSUME_2;
-	}
-
-	if (unlikely(flags & DISPATCH_WAKEUP_BARRIER_COMPLETE)) {
-		//
-		// _dispatch_lane_class_barrier_complete() is about what both regular
-		// queues and sources needs to evaluate, but the former can have sync
-		// handoffs to perform which _dispatch_lane_class_barrier_complete()
-		// doesn't handle, only _dispatch_lane_barrier_complete() does.
-		//
-		// _dispatch_lane_wakeup() is the one for plain queues that calls
-		// _dispatch_lane_barrier_complete(), and this is only taken for non
-		// queue types.
-		//
-		dispatch_assert(dx_metatype(dq) == _DISPATCH_SOURCE_TYPE);
-		qos = _dispatch_queue_wakeup_qos(dq, qos);
-		return _dispatch_lane_class_barrier_complete(upcast(dq)._dl, qos,
-				flags, target, DISPATCH_QUEUE_SERIAL_DRAIN_OWNED);
-	}
-
-	if (target) {
-		uint64_t old_state, new_state, enqueue = DISPATCH_QUEUE_ENQUEUED;
-		if (target == DISPATCH_QUEUE_WAKEUP_MGR) {
-			enqueue = DISPATCH_QUEUE_ENQUEUED_ON_MGR;
-		}
-		qos = _dispatch_queue_wakeup_qos(dq, qos);
-		os_atomic_rmw_loop2o(dq, dq_state, old_state, new_state, release, {
-			new_state = _dq_state_merge_qos(old_state, qos);
-			if (likely(!_dq_state_is_suspended(old_state) &&
-					!_dq_state_is_enqueued(old_state) &&
-					(!_dq_state_drain_locked(old_state) ||
-					(enqueue != DISPATCH_QUEUE_ENQUEUED_ON_MGR &&
-					_dq_state_is_base_wlh(old_state))))) {
-				new_state |= enqueue;
-			}
-			if (flags & DISPATCH_WAKEUP_MAKE_DIRTY) {
-				new_state |= DISPATCH_QUEUE_DIRTY;
-			} else if (new_state == old_state) {
-				os_atomic_rmw_loop_give_up(goto done);
-			}
-		});
-
-		if (likely((old_state ^ new_state) & enqueue)) {
-			dispatch_queue_t tq;
-			if (target == DISPATCH_QUEUE_WAKEUP_TARGET) {
-				// the rmw_loop above has no acquire barrier, as the last block
-				// of a queue asyncing to that queue is not an uncommon pattern
-				// and in that case the acquire would be completely useless
-				//
-				// so instead use depdendency ordering to read
-				// the targetq pointer.
-				os_atomic_thread_fence(dependency);
-				tq = os_atomic_load_with_dependency_on2o(dq, do_targetq,
-						(long)new_state);
-			} else {
-				tq = target;
-			}
-			dispatch_assert(_dq_state_is_enqueued(new_state));
-			return _dispatch_queue_push_queue(tq, dq, new_state);
-		}
-#if HAVE_PTHREAD_WORKQUEUE_QOS
-		if (unlikely((old_state ^ new_state) & DISPATCH_QUEUE_MAX_QOS_MASK)) {
-			if (_dq_state_should_override(new_state)) {
-				return _dispatch_queue_wakeup_with_override(dq, new_state,
-						flags);
-			}
-		}
-	} else if (qos) {
-		//
-		// Someone is trying to override the last work item of the queue.
-		//
-		uint64_t old_state, new_state;
-		os_atomic_rmw_loop2o(dq, dq_state, old_state, new_state, relaxed, {
-			if (!_dq_state_drain_locked(old_state) ||
-					!_dq_state_is_enqueued(old_state)) {
-				os_atomic_rmw_loop_give_up(goto done);
-			}
-			new_state = _dq_state_merge_qos(old_state, qos);
-			if (new_state == old_state) {
-				os_atomic_rmw_loop_give_up(goto done);
-			}
-		});
-		if (_dq_state_should_override(new_state)) {
-			return _dispatch_queue_wakeup_with_override(dq, new_state, flags);
-		}
-#endif // HAVE_PTHREAD_WORKQUEUE_QOS
-	}
-done:
-	if (likely(flags & DISPATCH_WAKEUP_CONSUME_2)) {
-		return _dispatch_release_2_tailcall(dq);
-	}
-}
-```
-Здесь кратко по основным моментам.  
-Если есть таргет, вычисляется итоговое качество обслуживания. Если состояние `if (new_state == old_state)` совпадает - очередь уже находится в обработке, ничего не делаем. Если этот поток забрал очередь `(old_state ^ new_state) & enqueue`, то он пушит лэйн в целевую очередь вызовом .
-```c
-DISPATCH_ALWAYS_INLINE
-static inline void
-_dispatch_queue_push_queue(dispatch_queue_t tq, dispatch_queue_class_t dq,
-		uint64_t dq_state)
-{
-#if DISPATCH_USE_KEVENT_WORKLOOP
-	if (likely(_dq_state_is_base_wlh(dq_state))) {
-		_dispatch_trace_runtime_event(worker_request, dq._dq, 1);
-		return _dispatch_event_loop_poke((dispatch_wlh_t)dq._dq, dq_state,
-				DISPATCH_EVENT_LOOP_CONSUME_2);
-	}
-#endif // DISPATCH_USE_KEVENT_WORKLOOP
-	_dispatch_trace_item_push(tq, dq);
-	return dx_push(tq, dq, _dq_state_max_qos(dq_state));
-}
-`
-Если же повысилось качество обслуживания очереди `old_state ^ new_state) & DISPATCH_QUEUE_MAX_QOS_MASK`, или таргета нет, но надо сменить качество обслуживания, например
-```swift
-let queue = DispatchQueue(label: "background.lane", qos: .background)
-
-// 1. Создаем фоновую задачу
-let workItem = DispatchWorkItem(qos: .background) {
-    // Some heavy work
-}
-queue.async(execute: workItem) // Очередь запустилась, target зафиксирован
-
-// 2. Спустя время на главном потоке пишем:
-workItem.perform() 
-```
-Вызывается `_dispatch_queue_wakeup_with_override`, в которой вызывается подталкивание очереди `_dispatch_event_loop_poke` или (если код скомпилирован под старую ось или, например, Linux) `_dispatch_queue_wakeup_with_override_slow`.
+2. `dispatch_async` вызывает `_dispatch_continuation_async`.
+3. `_dispatch_continuation_async` возвращает `dx_push`.
+4. `dx_push` - макрос, достающий значение `dq_push` из таблицы очереди (табличная диспетчеризация).
+5. 
+  - У конкурентного лэйна `dq_push` соответствует методу `_dispatch_lane_concurrent_push`.
+    1. Вызывается `_dispatch_lane_concurrent_push`.
+      - Если лэйн пуст:
+        1. Вызывается `_dispatch_continuation_redirect_push`.
+        2. `_dispatch_continuation_redirect_push` вызывает `dx_push` на целевой очереди лэйна.
+      - Если лэйн не пуст:
+        1. Вызывается `_dispatch_lane_push`.
+        2. `_dispatch_lane_push` закидывает задачу в хвост лэйна.
+          - Если нужно повысить приоритет уже обрабатываемого лэйна
+            1. Вызывается `dx_wakeup`.
+  - У последовательного лэйна `dq_push` соответствует методу `_dispatch_lane_push`.
+    1. Вызывается `_dispatch_lane_push`.
+    2. `_dispatch_lane_push` закидывает задачу в хвост лэйна.
+      - Если нужно повысить приоритет уже обрабатываемого лэйна
+        1. Вызывается `dx_wakeup`.
+6. `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
+  - `dx_wakeup` в `vtable` последовательных и конкурентных лэйнов соответствует `_dispatch_lane_wakeup`. 
+    1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
+    2. В `_dispatch_queue_wakeup`
+      - Если поток выиграл гонку за очередь:
+        1. Вызываетcя `_dispatch_queue_push_queue`
+      - Если приоритет задачи выше, или надо сменить качество обслуживания при отсутствии таргета (например, при `dispatchWorkItem.perform()` с очереди с более высоким приоритетом)
+        1. Вызывается `_dispatch_queue_wakeup_with_override`
+        2. `_dispatch_queue_wakeup_with_override` вызывает
+          - `_dispatch_event_loop_poke`
+          - `_dispatch_queue_wakeup_with_override_slow` для старых осей или Linux. 
 ### В глобальной очереди
 ```c
 DISPATCH_NOINLINE
