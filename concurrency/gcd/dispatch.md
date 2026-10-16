@@ -322,6 +322,15 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
         - Закидывает задачу в хвост лэйна.
         - Если нужно повысить качество обслуживания уже обрабатываемого лэйна:
           - Вызывается `dx_wakeup`.
+            - `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
+  			  -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
+                - Если очередь не пуста:
+                  - Вызывается `_dispatch_queue_wakeup`.
+                    - Если поток выиграл гонку за очередь:
+                      - Вызываетcя `_dispatch_queue_push_queue` !!!
+                    - Если качество обслуживания задачи выше:
+                      - Вызывается `_dispatch_queue_wakeup_with_override`
+  - У глобальных очередей `dq_wakeup` соответствует `_dispatch_root_queue_wakeup` !!!
       - У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push`.
         - Если очередь может класть задачи в буфер отложенных:
           - Буфер отложенных пустой или есть оверкоммит:
@@ -353,13 +362,3 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
               - Вызывается `_dispatch_root_queue_poke_slow`.
                 - У ядра запрашивается по потоку на задачу.
                 - Выход.
-- `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
-  -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
-    1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
-    2. В `_dispatch_queue_wakeup`
-      - Если поток выиграл гонку за очередь:
-        1. Вызываетcя `_dispatch_queue_push_queue` !!!
-      - Если приоритет задачи выше, или надо сменить качество обслуживания при отсутствии таргета (например, при `dispatchWorkItem.perform()` с очереди с более высоким приоритетом)
-        1. Вызывается `_dispatch_queue_wakeup_with_override`
-        2. `_dispatch_queue_wakeup_with_override` поднимает приоритет потока.
-  - У глобальных очередей `dq_wakeup` соответствует `_dispatch_root_queue_wakeup` !!!
