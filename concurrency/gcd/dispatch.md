@@ -335,7 +335,7 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
         1. Вызываетcя `_dispatch_queue_push_queue`
       - Если приоритет задачи выше, или надо сменить качество обслуживания при отсутствии таргета (например, при `dispatchWorkItem.perform()` с очереди с более высоким приоритетом)
         1. Вызывается `_dispatch_queue_wakeup_with_override`
-        2. `_dispatch_queue_wakeup_with_override` вызывает
+        2. `_dispatch_queue_wakeup_with_override` поднимает приоритет потока вызовом
           - `_dispatch_event_loop_poke`
           - `_dispatch_queue_wakeup_with_override_slow` для старых осей или Linux. 
 ### В глобальной очереди
