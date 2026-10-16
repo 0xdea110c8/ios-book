@@ -308,27 +308,31 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 - `intermediateLane` - неоверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 - `lane` - оверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 ## Вызов async
-1. В `libdispatch` вызывается `dispatch_async`.
-2. `dispatch_async` вызывает `_dispatch_continuation_async`.
-3. `_dispatch_continuation_async` возвращает `dx_push`.
-4. `dx_push` - макрос, достающий значение `dq_push` из таблицы очереди (табличная диспетчеризация).
+- В `libdispatch` вызывается `dispatch_async`.
+- `dispatch_async` вызывает `_dispatch_continuation_async`.
+- `_dispatch_continuation_async` возвращает `dx_push`.
+- `dx_push` - макрос, достающий значение `dq_push` из таблицы очереди (табличная диспетчеризация).
   - У конкурентного лэйна `dq_push` соответствует методу `_dispatch_lane_concurrent_push`.
-    1. Вызывается `_dispatch_lane_concurrent_push`.
+    - Вызывается `_dispatch_lane_concurrent_push`.
       - Если лэйн пуст:
-        1. Вызывается `_dispatch_continuation_redirect_push`.
-        2. `_dispatch_continuation_redirect_push` вызывает `dx_push` на целевой очереди лэйна.
+        - Вызывается `_dispatch_continuation_redirect_push`.
+        - `_dispatch_continuation_redirect_push` вызывает `dx_push` на целевой очереди лэйна.
       - Если лэйн не пуст:
-        1. Вызывается `_dispatch_lane_push`.
-        2. `_dispatch_lane_push` закидывает задачу в хвост лэйна.
+        - Вызывается `_dispatch_lane_push`.
+        - `_dispatch_lane_push` закидывает задачу в хвост лэйна.
           - Если нужно повысить приоритет уже обрабатываемого лэйна
-            1. Вызывается `dx_wakeup`.
+            - Вызывается `dx_wakeup`.
   - У последовательного лэйна `dq_push` соответствует методу `_dispatch_lane_push`.
-    1. Вызывается `_dispatch_lane_push`.
-    2. `_dispatch_lane_push` закидывает задачу в хвост лэйна.
+    - Вызывается `_dispatch_lane_push`.
+    - `_dispatch_lane_push` закидывает задачу в хвост лэйна.
       - Если нужно повысить приоритет уже обрабатываемого лэйна
-        1. Вызывается `dx_wakeup`.
-  - У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push` !!!
-5. `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
+        - Вызывается `dx_wakeup`.
+  - У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push`.
+    - Вызывается `_dispatch_root_queue_push`.
+      - Если очередь может класть задачи в буфер отложенных, буфер отложенных пустой или есть оверкоммит, задача кладётся в буфер отложенных
+        - Если есть оверкоммит, буфер отложенных задач закрывается.
+		- Если есть задачи в буфере, они вытесняются.
+- `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
   -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
     1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
     2. В `_dispatch_queue_wakeup`
