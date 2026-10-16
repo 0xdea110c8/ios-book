@@ -351,7 +351,7 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
             - Если уже есть задачи в обработке:
               - Выход.
           - Вызывается `_dispatch_root_queue_poke_slow`.
-            - Запрашиваются потоки у ядра.
+            - У ядра запрашивается по потоку на задачу.
 - `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
   -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
     1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
