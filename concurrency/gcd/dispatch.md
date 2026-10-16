@@ -331,10 +331,13 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
         - Задача кладётся в буфер отложенных.
         - Если есть оверкоммит:
           - Буфер отложенных задач закрывается.
+	    - Если буфер был пустой:
+          - Выход.
 		- Если есть задачи в буфере:
           - Они вытесняются.
     - Если надо повысить качество обслуживания очереди:
       - Вызывается `_dispatch_root_queue_push_override`.
+    - Вызывается `_dispatch_root_queue_push_inline`.
 - `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
   -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
     1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
