@@ -327,17 +327,17 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
     2. `_dispatch_lane_push` закидывает задачу в хвост лэйна.
       - Если нужно повысить приоритет уже обрабатываемого лэйна
         1. Вызывается `dx_wakeup`.
+  - У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push` !!!
 5. `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
-  - `dx_wakeup` в `vtable` последовательных и конкурентных лэйнов соответствует `_dispatch_lane_wakeup`. 
+  -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
     1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
     2. В `_dispatch_queue_wakeup`
       - Если поток выиграл гонку за очередь:
-        1. Вызываетcя `_dispatch_queue_push_queue`
+        1. Вызываетcя `_dispatch_queue_push_queue` !!!
       - Если приоритет задачи выше, или надо сменить качество обслуживания при отсутствии таргета (например, при `dispatchWorkItem.perform()` с очереди с более высоким приоритетом)
         1. Вызывается `_dispatch_queue_wakeup_with_override`
-        2. `_dispatch_queue_wakeup_with_override` поднимает приоритет потока вызовом
-          - `_dispatch_event_loop_poke`
-          - `_dispatch_queue_wakeup_with_override_slow` для старых осей или Linux. 
+        2. `_dispatch_queue_wakeup_with_override` поднимает приоритет потока.
+  - У глобальных очередей `dq_wakeup` соответствует `_dispatch_root_queue_wakeup` !!!
 ### В глобальной очереди
 ```c
 DISPATCH_NOINLINE
