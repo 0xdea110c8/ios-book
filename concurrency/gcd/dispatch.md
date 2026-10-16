@@ -323,7 +323,7 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
         - Если нужно повысить качество обслуживания уже обрабатываемого лэйна:
           - Вызывается `dx_wakeup`.
             - `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
-  			  -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
+  			  - У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
                 - Если очередь не пуста:
                   - Вызывается `_dispatch_queue_wakeup`.
                     - Если поток выиграл гонку за очередь:
