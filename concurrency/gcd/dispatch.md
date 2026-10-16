@@ -15,9 +15,6 @@
   - [Оверкоммитные очереди](#оверкоммитные-очереди)
   - [Оверкоммит лэйна и его глобальной очереди](#оверкоммит-лэйна-и-его-глобальной-очереди)
   - [Вызов async](#вызов-async)
-    - [В конкурентном лэйне](#в-конкурентном-лэйне)
-    - [В последовательном лэйне](#в-последовательном-лэйне)
-    - [В глобальной очереди](#в-глобальной-очереди)
 # Dispatch
 ### Описание
 Кроссплатформенный фреймворк для управления многопоточностью и конкурентного выполнения задач. Берёт на себя 
@@ -348,47 +345,3 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
         1. Вызывается `_dispatch_queue_wakeup_with_override`
         2. `_dispatch_queue_wakeup_with_override` поднимает приоритет потока.
   - У глобальных очередей `dq_wakeup` соответствует `_dispatch_root_queue_wakeup` !!!
-### В глобальной очереди
-```c
-DISPATCH_NOINLINE
-void
-_dispatch_root_queue_push(dispatch_queue_global_t rq, dispatch_object_t dou,
-		dispatch_qos_t qos)
-{
-#if DISPATCH_USE_KEVENT_WORKQUEUE
-	dispatch_deferred_items_t ddi = _dispatch_deferred_items_get();
-	if (unlikely(ddi && ddi->ddi_can_stash)) {
-		dispatch_object_t old_dou = ddi->ddi_stashed_dou;
-		dispatch_priority_t rq_overcommit;
-		rq_overcommit = rq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT;
-
-		if (likely(!old_dou._do || rq_overcommit)) {
-			dispatch_queue_global_t old_rq = ddi->ddi_stashed_rq;
-			dispatch_qos_t old_qos = ddi->ddi_stashed_qos;
-			ddi->ddi_stashed_rq = rq;
-			ddi->ddi_stashed_dou = dou;
-			ddi->ddi_stashed_qos = qos;
-			_dispatch_debug("deferring item %p, rq %p, qos %d",
-					dou._do, rq, qos);
-			if (rq_overcommit) {
-				ddi->ddi_can_stash = false;
-			}
-			if (likely(!old_dou._do)) {
-				return;
-			}
-			// push the previously stashed item
-			qos = old_qos;
-			rq = old_rq;
-			dou = old_dou;
-		}
-	}
-#endif
-#if HAVE_PTHREAD_WORKQUEUE_QOS
-	if (_dispatch_root_queue_push_needs_override(rq, qos)) {
-		return _dispatch_root_queue_push_override(rq, dou, qos);
-	}
-#else
-	(void)qos;
-#endif
-	_dispatch_root_queue_push_inline(rq, dou, dou, 1);
-}
