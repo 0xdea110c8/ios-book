@@ -312,7 +312,6 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 2. `dispatch_async` вызывает `_dispatch_continuation_async`.
 3. `_dispatch_continuation_async` возвращает `dx_push`.
 4. `dx_push` - макрос, достающий значение `dq_push` из таблицы очереди (табличная диспетчеризация).
-5. 
   - У конкурентного лэйна `dq_push` соответствует методу `_dispatch_lane_concurrent_push`.
     1. Вызывается `_dispatch_lane_concurrent_push`.
       - Если лэйн пуст:
@@ -328,7 +327,7 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
     2. `_dispatch_lane_push` закидывает задачу в хвост лэйна.
       - Если нужно повысить приоритет уже обрабатываемого лэйна
         1. Вызывается `dx_wakeup`.
-6. `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
+5. `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
   - `dx_wakeup` в `vtable` последовательных и конкурентных лэйнов соответствует `_dispatch_lane_wakeup`. 
     1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
     2. В `_dispatch_queue_wakeup`
