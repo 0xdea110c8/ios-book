@@ -323,7 +323,7 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
           - Вызывается `dx_wakeup`.
   - У последовательного лэйна `dq_push` соответствует методу `_dispatch_lane_push`.
     - Закидывает задачу в хвост лэйна.
-    - Если нужно повысить приоритет уже обрабатываемого лэйна:
+    - Если нужно повысить качество обслуживания уже обрабатываемого лэйна:
       - Вызывается `dx_wakeup`.
   - У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push`.
     - Если очередь может класть задачи в буфер отложенных:
@@ -333,6 +333,8 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
           - Буфер отложенных задач закрывается.
 		- Если есть задачи в буфере:
           - Они вытесняются.
+    - Если надо повысить качество обслуживания очереди:
+      - Вызывается `_dispatch_root_queue_push_override`.
 - `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
   -  У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
     1. В `_dispatch_lane_wakeup`, eсли очередь не пуста, вызывается `_dispatch_queue_wakeup`.
