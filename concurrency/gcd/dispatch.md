@@ -330,7 +330,7 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
                       - Вызываетcя `_dispatch_queue_push_queue` !!!
                     - Если качество обслуживания задачи выше:
                       - Вызывается `_dispatch_queue_wakeup_with_override`
-  - У глобальных очередей `dq_wakeup` соответствует `_dispatch_root_queue_wakeup` !!!
+      - У глобальных очередей `dq_wakeup` соответствует `_dispatch_root_queue_wakeup` !!!
       - У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push`.
         - Если очередь может класть задачи в буфер отложенных:
           - Буфер отложенных пустой или есть оверкоммит:
