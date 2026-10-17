@@ -322,14 +322,22 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
         			- Закидывает задачу в хвост лэйна.
         			- Если нужно повысить качество обслуживания уже обрабатываемого лэйна:
           				- Вызывается `dx_wakeup`.
-			- `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
-				- У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
-					- Если очередь не пуста:
-                  		- Вызывается `_dispatch_queue_wakeup`.
-                    		- Если поток выиграл гонку за очередь:
-                      			- Вызываетcя `_dispatch_queue_push_queue` !!!
-                    		- Если качество обслуживания задачи выше:
-                      			- Вызывается `_dispatch_queue_wakeup_with_override`
+							- `dx_wakeup` - макрос, достающий значение `dq_wakeup` из таблицы очередей.
+								- У последовательных и конкурентных лэйнов `dq_wakeup` соответствует `_dispatch_lane_wakeup`. 
+									- Если очередь не пуста:
+                  						- Вызывается `_dispatch_queue_wakeup`.
+                    						- Если поток выиграл гонку за очередь:
+                      							- Вызываетcя `_dispatch_queue_push_queue` !!!
+                    						- Если качество обслуживания задачи выше:
+                      							- Вызывается `_dispatch_queue_wakeup_with_override`
+                               						- Если целевая очередь глобальная, лэйн активен и не находится в процессе уничтожения:
+                                     					- Возвращается `_dispatch_event_loop_poke`.
+                                          					- Если `wlh == DISPATCH_WLH_MANAGER`:
+                                               					- Возвращается `_dispatch_kq_deferred_update`.
+                                                      				- Событие откладывается в буфер текущего ядра процессора для пакетной отправки в ядро ОС.
+                                                          	- Если `wlh && wlh != DISPATCH_WLH_ANON`:
+																- Вызывается `dx_push` на очереди менеджера. !!!
+                                          			- Возвращается `_dispatch_queue_wakeup_with_override_slow`.
       			- У глобальных очередей `dq_wakeup` соответствует `_dispatch_root_queue_wakeup` !!!
 				- У глобальной очереди `dq_push` соответствует методу `_dispatch_root_queue_push`.
         - Если очередь может класть задачи в буфер отложенных:
