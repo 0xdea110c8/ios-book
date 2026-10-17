@@ -305,6 +305,30 @@ let lane = DispatchQueue(label: "lane.serial.overcommit", target: intermediateLa
 - `intermediateLane` - неоверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 - `lane` - оверкоммитный последовательный лэйн, глобальная очередь - неоверкоммитная.
 ## Вызов async
+```
+.async
+
+dispatch_async
+
+_dispatch_continuation_async
+
+dx_push
+
+_dispatch_lane_concurrent_push
+      
+empty lane? -N-------------------------→ _dispatch_lane_push    _dispatch_root_queue_push
+
+_dispatch_continuation_redirect_push
+
+target → dx_push
+```
+```mermaid
+graph TD
+    A[Старт] --> B(Процесс 1)
+    B --> C{Решение}
+    C -->|Да| D[Конец 1]
+    C -->|Нет| E[Конец 2]
+```
 - В `libdispatch` вызывается `dispatch_async`.
 	- Вызывается `_dispatch_continuation_async`.
   		- Возвращается `dx_push`.
