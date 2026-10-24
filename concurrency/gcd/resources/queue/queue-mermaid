@@ -1,0 +1,194 @@
+flowchart TD
+    A([.sync])
+    A --> B[dispatch_sync]
+    B --> C{У блока есть метаданные}
+    C --> |Да| D[_dispatch_sync_block_with_privdata]
+    C --> |Нет| E[_dispatch_sync_f]
+    D --> F[Извлекаются метаданные]
+    F --> G[Метаданные применяются к потоку]
+    G --> H{Задача барьерная}
+    H --> |Да| I[_dispatch_barrier_sync_f]
+    H --> |Нет| E
+    I --> J[_dispatch_barrier_sync_f_inline]
+    J --> K{Поток захватил очередь}
+    K --> |Да| L{Лэйн вложенный}
+    K --> |Нет| M[_dispatch_sync_f_slow]
+    L --> |Да| N[_dispatch_sync_recurse]
+    L --> |Нет| O[_dispatch_lane_barrier_sync_invoke_and_complete]
+    N --> P{Родительская очередь последовательная}
+    P --> |Да| Q{Поток захватил очередь}
+    P --> |Нет| R{Есть слоты на выполнение}
+    Q --> |Да| S[Есть родительская очередь]
+    Q --> |Нет| M
+    R --> |Да| S
+    R --> |Нет| M
+    S --> |Да| T[Проверяем на родительской очереди]
+    S --> |Нет| U[_dispatch_sync_invoke_and_complete_recurse]
+    T --> N
+    O --> V[_dispatch_sync_function_invoke_inline]
+    V --> W[Выполняется задача]
+    W --> X[_dispatch_sync_complete_recurse]
+    X --> Y{Задача была барьерная}
+    Y --> |Да| Z((dx_wakeup))
+    Y --> |Нет| AA[_dispatch_lane_non_barrier_complete]
+    Z --> AB{Есть родительская очередь}
+    AA --> AB
+    AB --> |Да| AO[Повторяем для родительской очереди]
+    AO --> Y
+    AB --> |Нет| AC([return])
+    U --> V
+    M --> AD{Есть родительская очередь}
+    AD --> |Да| AE[/Усыпляем поток/]
+    AD --> |Нет| AF[_dispatch_sync_function_invoke]
+    AF --> V
+    AG[/Поток был разбужен/]
+    AG --> AH{Задача была выполнена другим потоком}
+    AH --> |Да| X
+    AH --> |Нет| U
+    E --> AI[_dispatch_sync_f_inline]
+    AI --> AJ{Очередь последовательная}
+    AJ --> |Да| I
+    AJ --> |Нет| AL{Есть слоты на выполнение}
+    AL --> |Да| AM{Есть родительская очередь}
+    AL --> |Нет| M
+    AM --> |Да| N
+    AM --> |Нет| AN[_dispatch_sync_invoke_and_complete]
+    AN --> V
+    
+    BA([.async])
+    BA --> BB[dispatch_async]
+    BB --> BC[_dispatch_continuation_async]
+    BC --> BD[dx_push]
+    BD --> |Конкурентный лэйн| BE[_dispatch_lane_concurrent_push]
+    BD --> |Последовательный лэйн| BF[_dispatch_lane_push]
+    BD --> |Глобальная очередь| BG[_dispatch_root_queue_push]
+    BD --> |Главная очередь| BS[_dispatch_main_queue_push] 
+    BE --> BH{Хвост очереди пустой, вызов не синхронный, задача не барьерная, есть слоты на выполнение}
+    BH --> |Да| BI[_dispatch_continuation_redirect_push]
+    BH --> |Нет| BF
+    BI --> BJ[Выполняем dx_push на родительской очереди]
+    BJ --> BD
+    BF --> BK{Вызов синхронный}
+    BK --> |Да| BL[_dispatch_lane_push_waiter]
+    BK --> |Нет| BM[Добавляем задачу в хвост лэйна]
+    BM --> BN{Лэйн был пустой или надо поднять качество обслуживания}
+    BN --> |Да| BO((dx_wakeup))
+    BS --> BO
+    BN --> |Нет| BP([return])
+    BG --> BQ{Очередь может складывать задачи в стэш}
+    BQ --> |Да| BR{Стэш был пустой или есть оверкоммит}
+    BQ --> |Нет| BU
+    BR --> |Да| BT[Кладём задачу в стэш]
+    BR --> |Нет| BU{Надо поднять качество обслуживания}
+    BT --> BV{Есть оверкоммит}
+    BV --> |Да| BW[Больше нельзя класть задачи в стэш]
+    BV --> |Нет| BX{Стэш был пустой}
+    BW --> BX
+    BX --> |Да| BY([return])
+    BX --> |Нет| BZ[Вытесняем старый стэш]
+    BZ --> BU
+    BU --> |Да| CA[_dispatch_root_queue_push_override]
+    BU --> |Да| CB[_dispatch_root_queue_push_inline]
+    CA --> CC[Находится очередь с нужным качеством обслуживания]
+    CC --> CD[Создаётся контейнер повышения приоритета]
+    CD --> CE{Задача из пустого конкурентного лэйна}
+    CE --> |Да| CF[В контейнер вставляется указатель на конкурентный лэйн]
+    CE --> |Нет| CG[В контейнер вставляется указатель на задачу и оригинальную глобальную очередь]
+    CF --> CB
+    CG --> CB
+    CB --> CH[Список задач присоединяется к хвосту очереди]
+    CH --> CI{Очередь была пуста}
+    CI --> |Да| CJ[_dispatch_root_queue_poke]
+    CI --> |Нет| CK([return])
+    CJ --> CL{Очередь пуста}
+    CL --> |Да| CM([return])
+    CL --> |Нет| CN{Уже есть запросы на создание потоков}
+    CN --> |Да| CO([return])
+    CN --> |Нет| CP[_dispatch_root_queue_poke_slow]
+    CP --> CQ[Запрашиваем у ядра потоки, учитывая оверкоммит]
+    CQ --> CR([return])
+    BL --> CS{Лэйн был пуст}
+    CS --> |Да| CT{Надо разбудить лэйн}
+    CS --> |Да| CU{Лэйн заблокирован на чтение или не может быть запущен}
+    CT --> |Да| BO
+    CT --> |Нет| CU
+    CU --> |Да| CW[Ничего не делаем]
+    CU --> |Нет| CX{Очередь это базовый ворклуп и уже запланирована}
+    CX --> |Да| CY[Оставляем это потоку обработки событий]
+    CX --> |Нет| CZ{Есть отложенный барьер или наш слот не переполнит лэйн}
+    CZ --> |Да| DA[Делаем себя владельцем лэйна]
+    CZ --> |Нет| DB{Смогли занять лэйн}
+    CW --> DB
+    CY --> DB
+    DA --> DB
+    DB --> |Да| DC[_dispatch_lane_barrier_complete]
+    DB --> |Нет| DE{Изменилось качество обслуживания}
+    DE --> |Да| DF[_dispatch_queue_wakeup_with_override]
+    DE --> |Нет| DG([return])
+    DC --> DH{Лэйн не пуст и не приостановлен}
+    DH --> |Нет| DI[_dispatch_lane_class_barrier_complete]
+    DH --> |Да| DJ{Лэйн последовательный или задача барьерная}
+    DJ --> |Да| DK{Синхронный вызов}
+    DJ --> |Нет| DL{Лэйн конкурентный и задача не барьерная}
+    DK --> |Да| DM[_dispatch_lane_drain_barrier_waiter]
+    DK --> |Нет| DL
+    DL --> |Нет| DI
+    DL --> |Да| DM[_dispatch_lane_drain_non_barriers]
+    DM --> DO[Передаем владение очередью ждущему потоку]
+    DO --> DP[_dispatch_barrier_waiter_redirect_or_wake]
+    DP --> DQ[Поднимаем качество обслуживания потока до качества обслуживания очереди]
+    DQ --> DR[Сбрасываем повышение качества обслуживания]
+    DR --> DS{Есть родительская очередь}
+    DS --> |Да| DT{Родительская очередь конкурентная}
+    DT --> |Да| DU[Снимаем флаг барьера]
+    DS --> |Нет| DW[_dispatch_waiter_wake]
+    DT --> |Нет| DX[Ставим флаг барьера]
+    DX --> BD
+    DU --> DY{Заняли очередь}
+    DY --> |Да| BD
+    DY --> |Да| DZ[_dispatch_non_barrier_waiter_redirect_or_wake]
+    DZ --> EA{Лэйн вложенный}
+    EA --> |Да| EB{Родительский лэйн последовательный}
+    EB --> |Да| EC[Выставляем флаг барьера]
+    EB --> |Нет| ED{Получилось занять слот на выполнение}
+    ED --> |Да| EE[Повторяем на родительском лэйне]
+    EE --> EA
+    EC --> BD
+    ED --> |Нет| BD
+    EA --> |Нет| EF[_dispatch_waiter_wake_wlh_anon]
+    EF --> EG[Будим поток]
+    EG --> EH([return])
+    DW --> EI{Очередь находится в состоянии передачи блокировки}
+    EI --> |Да| EJ[_dispatch_event_loop_wake_owner]
+    EI --> |Нет| EK{Поток анонимный}
+    EK --> |Да| EF
+    EK --> |Нет| EM([return])
+    EJ --> EN[Ядро выделяет поток]
+    EN --> EK
+    DI --> EO[Освобождаем очередь]
+    EO --> EP{Есть родительская очередь}
+    EP --> |Да| EQ{Состояние изменилось, очередь запланирована}
+    EQ --> |Да| ER[_dispatch_queue_push_queue]
+    EQ --> |Нет| ES{Надо повысить приоритет}
+    ES --> |Да| DF
+    ES --> |Нет| ET([return])
+    EP --> |Нет| ET
+    ER --> EU{Очередь является базовым ворклупом}
+    EU --> |Да| EW[_dispatch_event_loop_poke]
+    EU --> |Нет| BD
+    EW --> EX[Будим менеджера или ворклуп]
+    EX --> EY([return])
+    DF --> EZ{Очередь является базовым ворклупом}
+    EZ --> |Да| EW
+    EZ --> |Нет| FA[_dispatch_queue_wakeup_with_override_slow]
+    FA --> FB[Запрашиваем воркеры, проталкиваем очередь на выполнение]
+    FB --> FC([return])
+
+    GA([asyncAfter])
+    GA --> GB{Время бесконечное}
+    GB --> |Да| GC{Дебаг режим}
+    GC --> |Да| GD([crash])
+    GC --> |Нет| GE([return])
+    GB --> |Нет| GF{Время уже наступило}
+    GF --> |Да| GG([.async])
+    GF --> |Нет| GH([dispatch_source_create])
